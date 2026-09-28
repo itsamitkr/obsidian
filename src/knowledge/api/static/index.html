@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Knowledge System — Control Panel</title>
+<!-- No external assets: the panel makes ZERO outbound requests. Fonts come
+     from the OS (Inter if installed, otherwise the native UI font). -->
+<style>
+  /* Theme aligned with obsidian.md: near-black canvas, single violet accent,
+     Inter/system-ui type. Colours referenced from Obsidian's brand palette. */
+  :root{
+    --bg:#0b0b0f; --panel:#131318; --panel-2:#1a1a21; --line:#2a2a33;
+    --text:#dcddde; --muted:#8a8f98;
+    --accent:#a78bfa;        /* wordmark / links */
+    --accent-2:#8a5cf5;      /* filled buttons */
+    --accent-soft:rgba(167,139,250,.14);
+    --ok:#4ade80; --warn:#fbbf24; --err:#f87171;
+    --mono:"SFMono-Regular",ui-monospace,Consolas,"Liberation Mono",monospace;
+    --radius:10px;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#fafafa; --panel:#fff; --panel-2:#f4f4f6; --line:#e4e4e8;
+           --text:#1f2023; --muted:#6b7077;
+           --accent:#7c5cf0; --accent-2:#6d3ff0;
+           --accent-soft:rgba(124,92,240,.10); }
+  }
+  *{box-sizing:border-box}
+  /* System font stack only -- nothing is fetched from a CDN. */
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.6 Inter,"Segoe UI Variable Text","Segoe UI",system-ui,
+            -apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  /* Subtle violet glow, echoing the obsidian.md hero. */
+  body::before{content:"";position:fixed;inset:0 0 auto 0;height:420px;
+    background:radial-gradient(60% 100% at 50% 0,rgba(138,92,245,.16),transparent 70%);
+    pointer-events:none;z-index:0}
+  header,main,#toast{position:relative;z-index:1}
+  header{padding:20px 24px;border-bottom:1px solid var(--line);
+         display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+         background:rgba(19,19,24,.72);backdrop-filter:blur(10px);
+         position:sticky;top:0;z-index:5}
+  @media (prefers-color-scheme: light){
+    header{background:rgba(255,255,255,.78)}
+  }
+  h1{font-size:18px;margin:0;font-weight:700;letter-spacing:-.01em;flex:0 0 auto}
+  h1 .mark{color:var(--accent)}
+  /* A long vault path must ellipsize, not push the header wider. */
+  .sub{color:var(--muted);font-size:13px;min-width:0;overflow:hidden;
+       text-overflow:ellipsis;white-space:nowrap}
+  /* Never let content widen the page: html/body clamp, and every grid/flex
+     child gets min-width:0 so it can shrink below its intrinsic content width
+     (the default `auto` is what lets one long log line stretch everything). */
+  html,body{max-width:100%;overflow-x:hidden}
+  main{max-width:1180px;margin:0 auto;padding:26px 22px 60px;display:grid;gap:18px;
+       width:100%;min-width:0}
+  .grid{display:grid;gap:18px;min-width:0}
+  .grid > *{min-width:0}
+  @media(min-width:900px){ .grid.cols2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)} }
+  section{background:var(--panel);border:1px solid var(--line);
+          border-radius:14px;padding:20px;min-width:0;overflow:hidden}
+  section > *{min-width:0;max-width:100%}
+  h2{font-size:15px;margin:0 0 4px;font-weight:650;letter-spacing:-.01em}
+  .hint{color:var(--muted);font-size:13px;margin:0 0 14px}
+  button{font:inherit;cursor:pointer;border-radius:var(--radius);padding:9px 15px;
+         border:1px solid var(--line);background:var(--panel-2);color:var(--text);
+         transition:background .15s,border-color .15s,color .15s}
+  button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:var(--accent-2);border-color:var(--accent-2);
+                 color:#fff;font-weight:600}
+  button.primary:hover:not(:disabled){background:var(--accent);
+                 border-color:var(--accent);color:#fff}
+  button.danger{border-color:var(--line);color:var(--muted)}
+  button.danger:hover:not(:disabled){border-color:var(--err);color:var(--err)}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+       min-width:0;max-width:100%}
+  #drop{border:1.5px dashed var(--line);border-radius:14px;padding:36px 18px;
+        text-align:center;transition:.18s;background:var(--panel-2)}
+  #drop:hover{border-color:var(--accent)}
+  #drop.over{border-color:var(--accent);background:var(--accent-soft)}
+  #drop p{margin:6px 0}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+  .stat{background:var(--panel-2);border:1px solid var(--line);
+        border-radius:var(--radius);padding:14px 12px;text-align:center}
+  .stat b{display:block;font-size:24px;line-height:1.15;font-weight:700;
+          color:var(--accent);letter-spacing:-.02em}
+  .stat span{color:var(--muted);font-size:12px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;
+        padding:5px 11px;border-radius:999px;border:1px solid var(--line);
+        background:var(--panel-2);color:var(--muted)}
+  /* Track badges: which ingestion path handled a file. */
+  .badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;
+         border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+  .badge.document{color:#7dd3fc;border-color:#0e7490;background:rgba(14,116,144,.15)}
+  .badge.structured{color:#86efac;border-color:#15803d;background:rgba(21,128,61,.15)}
+  .badge.analytical{color:#fcd34d;border-color:#a16207;background:rgba(161,98,7,.15)}
+  .badge.unsupported{color:var(--muted)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+  .dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(74,222,128,.18)}
+  .dot.off{background:var(--err);box-shadow:0 0 0 3px rgba(248,113,113,.15)}
+  pre,code{font-family:var(--mono);font-size:12.5px}
+  /* Logs scroll inside their own box (both axes) and never resize the page.
+     `white-space:pre` preserves the agent's own alignment; the .wrap variant
+     soft-wraps instead, toggled from the UI. */
+  pre{background:var(--panel-2);border:1px solid var(--line);
+      border-radius:var(--radius);padding:12px;margin:0;color:var(--muted);
+      white-space:pre;overflow:auto;max-height:230px;
+      width:100%;max-width:100%;min-width:0}
+  pre.wrap{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+  .log{max-height:180px}
+  /* Fixed layout + anywhere-breaking cells keep long paths from widening the
+     table (and therefore the page). */
+  .tablewrap{overflow-x:auto;max-width:100%;min-width:0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;table-layout:fixed}
+  th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);
+        vertical-align:top;overflow-wrap:anywhere;word-break:break-word}
+  tr:last-child td{border-bottom:none}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;
+     letter-spacing:.06em}
+  input[type=text],input[type=number],input[type=search]{
+    font:inherit;padding:9px 12px;border-radius:var(--radius);
+    border:1px solid var(--line);background:var(--panel-2);color:var(--text)}
+  input:focus-visible{outline:none;border-color:var(--accent);
+    box-shadow:0 0 0 3px var(--accent-soft)}
+  label{font-size:13px;color:var(--muted)}
+  .cmd{display:flex;gap:8px;align-items:flex-start;margin:8px 0;
+       min-width:0;max-width:100%}
+  .cmd code{flex:1 1 auto;min-width:0;background:var(--panel-2);
+            border:1px solid var(--line);border-radius:var(--radius);
+            padding:10px 12px;display:block;
+            overflow-wrap:anywhere;word-break:break-word;color:var(--accent)}
+  .cmd button{flex:0 0 auto}
+  .cmdlabel{color:var(--muted);font-size:12px;margin-bottom:3px}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
+  .muted{color:var(--muted)}
+  .notice{border-left:2px solid var(--accent);padding:11px 14px;
+          background:var(--accent-soft);border-radius:0 var(--radius) var(--radius) 0;
+          font-size:13px}
+  #toast{position:fixed;right:20px;bottom:20px;display:grid;gap:8px;z-index:50}
+  .toast{background:var(--panel);border:1px solid var(--line);
+         border-left:2px solid var(--accent);border-radius:var(--radius);
+         padding:11px 15px;box-shadow:0 10px 30px rgba(0,0,0,.45);
+         font-size:13.5px;max-width:380px}
+  .toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<header>
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M12 2 4 7v10l8 5 8-5V7l-8-5Z" fill="url(#g)" opacity=".92"/>
+    <path d="M12 2 4 7v10l8 5 8-5V7l-8-5Zm0 2.3 6 3.8v7.8l-6 3.8-6-3.8V8.1l6-3.8Z"
+          fill="currentColor" opacity=".18"/>
+    <defs><linearGradient id="g" x1="4" y1="2" x2="20" y2="22"
+      gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a78bfa"/><stop offset="1" stop-color="#6d3ff0"/>
+    </linearGradient></defs>
+  </svg>
+  <h1>Knowledge<span class="mark">.</span>System</h1>
+  <span class="sub" id="vaultPath">—</span>
+  <span style="flex:1"></span>
+  <span class="pill"><span class="dot" id="dotApi"></span><span id="apiState">connecting…</span></span>
+  <span class="pill" id="pillStack">—</span>
+  <button id="hardReload" title="Reload the panel, bypassing the browser cache"
+          style="padding:5px 11px;font-size:12px">↻ Reload UI</button>
+</header>
+
+<main>
+  <!-- Status ---------------------------------------------------------- -->
+  <section aria-labelledby="h-status">
+    <h2 id="h-status">Overview</h2>
+    <p class="hint">Live counts from the vault and derived indexes.</p>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <div class="grid cols2">
+    <!-- Upload ------------------------------------------------------- -->
+    <section aria-labelledby="h-upload">
+      <h2 id="h-upload">1 · Upload documents</h2>
+      <p class="hint">Drop any number of files (PDF, DOCX, PPTX, XLSX, HTML, CSV, TXT, images).
+        Each is converted to Markdown, chunked, embedded and linked.</p>
+      <div id="drop" tabindex="0" role="button"
+           aria-label="Drop files here or press Enter to browse">
+        <p><strong>Drop files here</strong></p>
+        <p class="muted">or</p>
+        <p><button class="primary" id="browseBtn" type="button">Choose files…</button></p>
+        <input type="file" id="fileInput" multiple class="sr" />
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="processInbox">Process inbox now</button>
+        <span class="muted" id="pendingNote"></span>
+      </div>
+      <p class="muted" style="font-size:12.5px;margin:10px 0 0">
+        Each file is routed to a track:
+        <span class="badge document">document</span> prose → Markdown → chunks;
+        <span class="badge structured">structured</span> tables → records + entities;
+        <span class="badge analytical">analytical</span> models/large datasets are
+        <strong>staged, not indexed</strong>, until you add them explicitly.
+      </p>
+      <div id="uploadResults" style="margin-top:12px"></div>
+    </section>
+
+    <!-- Watcher / indexes -------------------------------------------- -->
+    <section aria-labelledby="h-watch">
+      <h2 id="h-watch">2 · Watcher &amp; indexes</h2>
+      <p class="hint">Run the watcher to auto-ingest anything dropped into
+        <code>00-Inbox/</code>. Indexes rebuild from Markdown at any time.</p>
+      <div class="row">
+        <span class="pill"><span class="dot" id="dotWatcher"></span>Watcher</span>
+        <button class="primary" id="watchStart">Start watcher</button>
+        <button class="danger" id="watchStop">Stop</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="rebuildVec">Rebuild vector index</button>
+        <button id="rebuildGraph">Rebuild graph</button>
+      </div>
+      <div class="row" style="margin-top:14px;justify-content:space-between">
+        <span class="cmdlabel" style="margin:0">Watcher log</span>
+        <label style="font-size:12px">
+          <input type="checkbox" id="wrapLogs" /> wrap long lines
+        </label>
+      </div>
+      <pre class="log" id="watcherLog" aria-live="polite">—</pre>
+    </section>
+  </div>
+
+  <!-- Analytical staging --------------------------------------------- -->
+  <section aria-labelledby="h-staged" id="stagedSection" hidden>
+    <h2 id="h-staged">Staged for analysis
+      <span class="badge analytical">analytical</span>
+    </h2>
+    <p class="hint">These look like models or large datasets, so they were
+      <strong>not</strong> indexed — that keeps the search index free of
+      thousands of meaningless number-cells. Use them for analysis as-is, or add
+      one to the knowledge base to make it searchable.</p>
+    <div id="stagedList"></div>
+  </section>
+
+  <!-- Connect to Claude ---------------------------------------------- -->
+  <section aria-labelledby="h-mcp">
+    <h2 id="h-mcp">3 · Connect an AI agent (MCP)</h2>
+    <p class="hint">Local agents (Claude Code / Desktop) need no tunnel. For
+      <strong>claude.ai web</strong>, start the HTTP server and a public tunnel,
+      then paste the connector URL.</p>
+
+    <div class="notice" style="margin-bottom:14px">
+      Everything runs locally — the tunnel is just <code>ngrok</code> on this
+      machine, no cloud setup. It does make this machine reachable publicly, so keep
+      <strong>read-only</strong> on, treat the URL as a secret, and stop the tunnel
+      when you're done.
+    </div>
+
+    <p class="notice" id="lockNote" hidden style="margin-bottom:14px">
+      The MCP server runs <strong>inside this panel</strong> on its own port, so it
+      shares the vault index safely. Because <strong>embedded Qdrant</strong> allows
+      only one client, don't run a second command (like
+      <code>knowledge watch</code> or <code>knowledge mcp</code>) in a terminal
+      while the panel is open — use the buttons here instead.
+    </p>
+
+    <div class="row">
+      <label for="mcpPort">Port</label>
+      <input type="number" id="mcpPort" value="8765" style="width:100px" />
+      <label><input type="checkbox" id="mcpReadOnly" checked /> read-only</label>
+      <span class="pill"><span class="dot" id="dotMcp"></span>MCP server</span>
+      <button class="primary" id="mcpStart">Start MCP (HTTP)</button>
+      <button class="danger" id="mcpStop">Stop</button>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <span class="pill"><span class="dot" id="dotTunnel"></span>Tunnel</span>
+      <button class="primary" id="tunStart">Start tunnel</button>
+      <button class="danger" id="tunStop">Stop</button>
+      <span class="muted" id="agentAvail"></span>
+    </div>
+
+    <div style="margin-top:14px">
+      <p class="cmdlabel">Connector URL for claude.ai</p>
+      <div class="cmd">
+        <code id="mcpUrl">— start the MCP server and tunnel —</code>
+        <button id="copyUrl">Copy</button>
+      </div>
+      <p class="muted" style="font-size:12.5px">
+        Paste this into claude.ai → Settings → Connectors → Add custom connector.
+        No API key is used: claude.ai cannot send custom headers, so
+        <strong>read-only</strong> is what protects the vault.
+      </p>
+      <p class="muted" style="font-size:12.5px" id="stableNote"></p>
+    </div>
+
+    <div class="grid cols2" style="margin-top:14px">
+      <div>
+        <p class="cmdlabel">MCP server log</p>
+        <pre class="log" id="mcpLog" aria-live="polite">—</pre>
+      </div>
+      <div>
+        <p class="cmdlabel">Tunnel log</p>
+        <pre class="log" id="tunnelLog" aria-live="polite">—</pre>
+      </div>
+    </div>
+  </section>
+
+  <div class="grid cols2">
+    <!-- Search ------------------------------------------------------- -->
+    <section aria-labelledby="h-search">
+      <h2 id="h-search">Search</h2>
+      <p class="hint">Semantic search over the vector index.</p>
+      <form class="row" id="searchForm" role="search">
+        <input type="search" id="q" placeholder="search your notes…"
+               style="flex:1;min-width:200px" aria-label="Search query" />
+        <button class="primary" type="submit">Search</button>
+      </form>
+      <div id="searchResults" style="margin-top:12px"></div>
+    </section>
+
+    <!-- Notes -------------------------------------------------------- -->
+    <section aria-labelledby="h-notes">
+      <h2 id="h-notes">Notes in the vault</h2>
+      <p class="hint">Markdown is the source of truth — open the vault in Obsidian
+        or any editor.</p>
+      <div id="notes" style="max-height:300px;overflow:auto"></div>
+    </section>
+  </div>
+
+  <!-- CLI ------------------------------------------------------------ -->
+  <section aria-labelledby="h-cli">
+    <h2 id="h-cli">CLI equivalents</h2>
+    <p class="hint">Everything above is also a command. Run these from
+      <code id="projRoot">the project root</code>.</p>
+    <div id="commands"></div>
+  </section>
+</main>
+
+<div id="toast" aria-live="polite" aria-atomic="true"></div>
+
+<script>
+/* ---------- helpers ---------- */
+const el = (id) => document.getElementById(id);
+function notify(msg, kind = "") {
+  const box = document.createElement("div");
+  box.className = "toast " + kind;
+  box.textContent = msg;
+  el("toast").appendChild(box);
+  setTimeout(() => box.remove(), 5000);
+}
+async function jget(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+async function jpost(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : null,
+  });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+function setDot(id, on) {
+  const d = el(id);
+  d.classList.toggle("on", !!on);
+  d.classList.toggle("off", !on);
+}
+async function copy(text, what) {
+  try {
+    await navigator.clipboard.writeText(text);
+    notify(`${what} copied`, "ok");
+  } catch {
+    notify("Copy failed — select and copy manually", "err");
+  }
+}
+
+/* ---------- stats ---------- */
+async function refreshStats() {
+  try {
+    const s = await jget("/stats");
+    setDot("dotApi", true);
+    el("apiState").textContent = "connected";
+    el("vaultPath").textContent = s.vault_path;
+    el("projRoot").textContent = s.vault_path.replace(/[\\/]knowledge-vault$/, "");
+    el("pillStack").textContent =
+      `${s.converter} · ${s.embedder} · ${s.vector_store}`;
+    const t = s.tracks || {};
+    const cards = [
+      ["Notes", s.notes], ["Sources", s.sources],
+      ["Pending", s.pending_inbox], ["Staged", s.staged_analytical ?? 0],
+      ["Documents", t.document ?? 0], ["Structured", t.structured ?? 0],
+      ["Graph nodes", s.graph_nodes], ["Edges", s.graph_edges],
+      ["Broken links", s.broken_links], ["Orphans", s.orphans],
+    ];
+    el("stats").innerHTML = cards
+      .map(([k, v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`)
+      .join("");
+    el("pendingNote").textContent = s.pending_inbox
+      ? `${s.pending_inbox} file(s) waiting: ${s.pending_files.join(", ")}`
+      : "Inbox is empty.";
+  } catch (e) {
+    setDot("dotApi", false);
+    el("apiState").textContent = "offline";
+  }
+}
+
+/* ---------- control status ---------- */
+async function refreshControl() {
+  // Never reassign button state while an action is in flight, or the poll
+  // re-enables/disables buttons underneath the user's click.
+  if (busy) return;
+  try {
+    const c = await jget("/control/status");
+    setDot("dotApi", true);
+    el("apiState").textContent = "connected";
+    setDot("dotWatcher", c.watcher.running);
+    setDot("dotTunnel", c.tunnel.running);
+    setDot("dotMcp", c.mcp.running);
+    el("watcherLog").textContent = c.watcher.log.join("\n") || "— not running —";
+    el("tunnelLog").textContent = c.tunnel.log.join("\n") || "— not running —";
+    el("mcpLog").textContent = c.mcp.log.join("\n") || "— not running —";
+    el("agentAvail").textContent = c.tunnel.available
+      ? `via ${c.tunnel.provider}`
+      : `${c.tunnel.provider} not found (put it in ./tools/)`;
+    el("mcpUrl").textContent =
+      c.tunnel.mcp_url || "— start the MCP server and tunnel —";
+    el("stableNote").innerHTML = c.tunnel.stable
+      ? `<span class="ok">Stable hostname</span>${
+           c.tunnel.configured_hostname
+             ? " (" + esc(c.tunnel.configured_hostname) + ")" : ""
+         } — this URL survives restarts, so you add the connector in claude.ai once.`
+      : `<span class="warn">Rotating hostname</span> — quick tunnels get a new URL
+         each restart, so you must re-paste it in claude.ai. See
+         <code>docs/TUNNEL.md</code> for a stable one.`;
+
+    el("watchStart").disabled = c.watcher.running;
+    el("watchStop").disabled = !c.watcher.running;
+    el("tunStart").disabled = c.tunnel.running || !c.tunnel.available;
+    el("tunStop").disabled = !c.tunnel.running;
+    el("mcpStart").disabled = c.mcp.running;
+    el("mcpStop").disabled = !c.mcp.running;
+    el("lockNote").hidden = !c.mcp.single_process_store;
+  } catch (e) {
+    // Make a dead/restarted server obvious instead of buttons silently no-oping.
+    setDot("dotApi", false);
+    el("apiState").textContent = "offline — is `knowledge panel` still running?";
+  }
+}
+
+/* ---------- upload ---------- */
+async function uploadFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  const fd = new FormData();
+  files.forEach((f) => fd.append("files", f));
+  el("uploadResults").innerHTML =
+    `<p class="muted">Processing ${files.length} file(s)… conversion + embedding can take a moment.</p>`;
+  try {
+    const res = await fetch("/ingest/upload", { method: "POST", body: fd });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const rows = await res.json();
+    el("uploadResults").innerHTML = renderOutcomes(rows);
+    const okCount = rows.filter((r) => r.status === "processed").length;
+    notify(`${okCount}/${rows.length} processed`, okCount ? "ok" : "err");
+    refreshStats(); refreshNotes(); refreshStaged();
+  } catch (e) {
+    el("uploadResults").innerHTML = `<p class="err">Upload failed: ${e.message}</p>`;
+    notify("Upload failed", "err");
+  }
+}
+function trackBadge(track) {
+  if (!track) return "";
+  return `<span class="badge ${esc(track)}">${esc(track)}</span>`;
+}
+function renderOutcomes(rows) {
+  return `<div class="tablewrap"><table><thead><tr><th>File</th><th>Track</th>
+    <th>Status</th><th>Note</th><th>Chunks</th><th>Detail</th></tr></thead><tbody>` +
+    rows.map((r) => {
+      const cls = r.status === "processed" ? "ok"
+                : r.status === "staged" ? "warn"
+                : r.status === "skipped" ? "warn" : "err";
+      // For staged files the useful detail is *why* it was routed there.
+      const detail = r.reason || r.error
+        || (r.track_reasons || []).join("; ") || "";
+      return `<tr><td>${esc(r.filename || r.source_path)}</td>
+        <td>${trackBadge(r.track)}</td>
+        <td class="${cls}">${esc(r.status)}</td>
+        <td>${esc(r.markdown_path || r.staged_path || "—")}</td>
+        <td>${r.chunks ?? 0}</td>
+        <td class="muted">${esc(detail)}</td></tr>`;
+    }).join("") + "</tbody></table></div>";
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ---------- staged analytical files ---------- */
+async function refreshStaged() {
+  try {
+    const items = await jget("/staged");
+    el("stagedSection").hidden = items.length === 0;
+    if (!items.length) return;
+    el("stagedList").innerHTML =
+      `<div class="tablewrap"><table><thead><tr><th>File</th><th>Size</th>
+       <th>Location</th><th></th></tr></thead><tbody>` +
+      items.map((it) => `<tr>
+        <td>${esc(it.name)}</td>
+        <td>${(it.bytes / 1e6).toFixed(2)} MB</td>
+        <td class="muted">${esc(it.path)}</td>
+        <td><button class="primary" data-promote="${esc(it.path)}">
+          Add to Knowledge Base</button></td></tr>`).join("") +
+      `</tbody></table></div>`;
+    el("stagedList").querySelectorAll("button[data-promote]").forEach((b) =>
+      b.addEventListener("click", () => promoteStaged(b, b.dataset.promote)));
+  } catch { /* offline; the header already reports it */ }
+}
+
+async function promoteStaged(btn, path) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Indexing…";
+  try {
+    const r = await jpost("/ingest/promote", { path });
+    if (r.status !== "processed") {
+      throw new Error(r.reason || r.error || r.status);
+    }
+    notify(`Indexed as ${r.track}: ${r.chunks} chunk(s)`, "ok");
+    refreshStaged(); refreshStats(); refreshNotes();
+  } catch (e) {
+    notify(`Could not add: ${e.message}`, "err");
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+/* ---------- notes & search ---------- */
+async function refreshNotes() {
+  try {
+    const notes = await jget("/notes");
+    el("notes").innerHTML = notes.length
+      ? `<div class="tablewrap"><table><thead><tr><th>Title</th><th>Path</th>
+         <th>Type</th></tr></thead><tbody>` +
+        notes.map((n) => `<tr><td>${esc(n.title)}</td>
+          <td class="muted">${esc(n.path)}</td>
+          <td class="muted">${esc(n.source_type || "note")}</td></tr>`).join("") +
+        `</tbody></table></div>`
+      : `<p class="muted">No notes yet — upload something.</p>`;
+  } catch {}
+}
+el("searchForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = el("q").value.trim();
+  if (!q) return;
+  el("searchResults").innerHTML = `<p class="muted">Searching…</p>`;
+  try {
+    const rows = await jpost("/search", { query: q, limit: 8 });
+    el("searchResults").innerHTML = rows.length
+      ? `<div class="tablewrap"><table><thead><tr><th style="width:70px">Score</th>
+         <th>Note</th><th>Section</th></tr></thead><tbody>` +
+        rows.map((r) => `<tr><td>${r.score.toFixed(3)}</td>
+          <td>${esc(r.markdown_path)}</td>
+          <td class="muted">${esc((r.heading_path || []).join(" › "))}</td></tr>`).join("") +
+        `</tbody></table></div>`
+      : `<p class="muted">No matches.</p>`;
+  } catch (e) {
+    el("searchResults").innerHTML = `<p class="err">${e.message}</p>`;
+  }
+});
+
+/* ---------- commands ---------- */
+async function refreshCommands() {
+  try {
+    const c = await jget("/control/commands");
+    el("commands").innerHTML = c.groups.map((g) => `
+      <h3 style="font-size:13.5px;margin:16px 0 6px">${esc(g.title)}</h3>
+      ${g.items.map((i) => `
+        <div><p class="cmdlabel">${esc(i.label)}</p>
+        <div class="cmd"><code>${esc(i.cmd)}</code>
+        <button data-cmd="${esc(i.cmd)}">Copy</button></div></div>`).join("")}
+    `).join("");
+    el("commands").querySelectorAll("button[data-cmd]").forEach((b) =>
+      b.addEventListener("click", () => copy(b.dataset.cmd, "Command")));
+  } catch {}
+}
+
+/* ---------- wiring ---------- */
+const drop = el("drop"), fileInput = el("fileInput");
+el("browseBtn").addEventListener("click", () => fileInput.click());
+drop.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
+});
+fileInput.addEventListener("change", () => { uploadFiles(fileInput.files); fileInput.value = ""; });
+["dragenter", "dragover"].forEach((ev) =>
+  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) =>
+  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => uploadFiles(e.dataTransfer.files));
+
+el("processInbox").addEventListener("click", async () => {
+  notify("Processing inbox…");
+  try {
+    const rows = await jpost("/ingest/inbox");
+    el("uploadResults").innerHTML = rows.length
+      ? renderOutcomes(rows) : `<p class="muted">Inbox was empty.</p>`;
+    refreshStats(); refreshNotes(); refreshStaged();
+  } catch (e) { notify("Failed: " + e.message, "err"); }
+});
+
+/* Wraps a control action: shows progress on the button, surfaces ANY failure,
+   and suspends the status poll so it can't fight the click mid-request. */
+let busy = false;
+function action(id, pendingLabel, fn) {
+  const btn = el(id);
+  const original = btn.textContent;
+  btn.addEventListener("click", async () => {
+    if (busy) return;
+    busy = true;
+    btn.disabled = true;
+    btn.textContent = pendingLabel;
+    try {
+      await fn();
+    } catch (e) {
+      notify(`${original} failed: ${e.message}`, "err");
+    } finally {
+      btn.textContent = original;
+      busy = false;
+      await refreshControl();   // re-derives the correct disabled state
+    }
+  });
+}
+
+action("watchStart", "Starting…", async () => {
+  const r = await jpost("/control/watcher/start");
+  if (r.error) throw new Error(r.error);
+  notify(r.already ? "Watcher already running" : "Watcher started", "ok");
+});
+action("watchStop", "Stopping…", async () => {
+  const r = await jpost("/control/watcher/stop");
+  if (r.running) throw new Error("watcher did not stop (still busy ingesting?)");
+  notify("Watcher stopped", "ok");
+});
+el("rebuildVec").addEventListener("click", async () => {
+  notify("Rebuilding vector index…");
+  try {
+    const r = await jpost("/rebuild/vector-index");
+    notify(`Indexed ${r.chunks} chunks from ${r.documents} notes`, "ok");
+    refreshStats();
+  } catch (e) { notify("Failed: " + e.message, "err"); }
+});
+el("rebuildGraph").addEventListener("click", async () => {
+  try {
+    const r = await jpost("/rebuild/graph");
+    notify(`Graph rebuilt: ${r.nodes} nodes`, "ok"); refreshStats();
+  } catch (e) { notify("Failed: " + e.message, "err"); }
+});
+
+action("mcpStart", "Starting…", async () => {
+  const r = await jpost("/control/mcp/start", {
+    port: Number(el("mcpPort").value) || 8765,
+    read_only: el("mcpReadOnly").checked,
+  });
+  if (r.error) throw new Error(r.error);
+  notify(r.already ? "MCP already running"
+                   : `MCP starting on port ${r.port} — ready in ~15s`, "ok");
+  // It boots asynchronously (loads the embedding model); confirm shortly after.
+  setTimeout(async () => {
+    const s = await jget("/control/status");
+    if (!s.mcp.running) {
+      notify("MCP exited on startup — see the log below", "err");
+      el("mcpLog").textContent = s.mcp.log.join("\n");
+    }
+    refreshCommands();
+  }, 8000);
+});
+action("mcpStop", "Stopping…", async () => {
+  const r = await jpost("/control/mcp/stop");
+  if (r.running) throw new Error("MCP did not stop");
+  notify("MCP stopped", "ok");
+});
+action("tunStart", "Starting…", async () => {
+  const r = await jpost("/control/tunnel/start",
+    { port: Number(el("mcpPort").value) || 8765 });
+  if (r.error) throw new Error(r.error);
+  notify("Tunnel starting — the URL appears in a few seconds", "ok");
+  setTimeout(() => { refreshControl(); refreshCommands(); }, 6000);
+});
+action("tunStop", "Stopping…", async () => {
+  const r = await jpost("/control/tunnel/stop");
+  if (r.running) throw new Error("tunnel did not stop");
+  notify("Tunnel stopped", "ok");
+});
+el("copyUrl").addEventListener("click", () => copy(el("mcpUrl").textContent.trim(), "URL"));
+
+/* Logs scroll horizontally by default (preserves the agent's own alignment);
+   this toggles soft wrapping instead. Preference persists. */
+const LOG_IDS = ["watcherLog", "tunnelLog", "mcpLog"];
+function applyWrap(on) {
+  LOG_IDS.forEach((id) => el(id).classList.toggle("wrap", on));
+  try { localStorage.setItem("ks.wrapLogs", on ? "1" : "0"); } catch {}
+}
+el("wrapLogs").addEventListener("change", (e) => applyWrap(e.target.checked));
+try {
+  const saved = localStorage.getItem("ks.wrapLogs") === "1";
+  el("wrapLogs").checked = saved;
+  applyWrap(saved);
+} catch {}
+
+/* Cache-busting reload: if the panel was ever served from cache, this forces a
+   fresh copy of the HTML+JS. */
+el("hardReload").addEventListener("click", () => {
+  location.replace(location.pathname + "?v=" + Date.now());
+});
+
+/* ---------- boot ---------- */
+refreshStats(); refreshControl(); refreshNotes(); refreshCommands(); refreshStaged();
+setInterval(refreshControl, 3000);
+setInterval(refreshStats, 10000);
+</script>
+</body>
+</html>

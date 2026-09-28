@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Test / tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local state (derived indexes & job state live here)
+.knowledge/state/
+.knowledge/logs/
+*.sqlite
+*.sqlite3
+*.db
+
+# Environment
+.env
+
+# Qdrant local storage
+qdrant_storage/
+
+# Downloaded local tooling binaries (e.g. ngrok)
+tools/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
+
+# ---------------------------------------------------------------------------
+# The knowledge vault is the user's SOURCE OF TRUTH and personal data. It is
+# versioned in its OWN git repository (see docs/SETUP.md), not inside this
+# code repo. `knowledge init` recreates its structure on a fresh clone, so
+# we exclude the default vault path here. If you point KS_VAULT_PATH somewhere
+# else, add that path to your own ignore rules.
+# ---------------------------------------------------------------------------
+/knowledge-vault/
+

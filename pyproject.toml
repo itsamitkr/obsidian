@@ -1,0 +1,82 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "knowledge-system"
+version = "0.1.0"
+description = "Local-first personal knowledge management and AI knowledge-graph system"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Knowledge System" }]
+keywords = ["knowledge", "pkm", "markdown", "vector-search", "mcp", "obsidian"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+# Core dependencies are intentionally lightweight. Heavy / optional
+# integrations (qdrant, sentence-transformers, markitdown, mcp) live in
+# extras so the system runs with deterministic fallbacks out of the box.
+dependencies = [
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "PyYAML>=6.0",
+    "SQLAlchemy>=2.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "httpx>=0.27",
+    "watchdog>=4.0",
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.111", "uvicorn[standard]>=0.30"]
+convert = ["markitdown[all]>=0.0.1a2"]
+# Track 2/3: spreadsheet probing + parsing, and hardened XML parsing. Without
+# these, .xlsx files degrade to a note explaining the extra is missing and XML
+# falls back to the stdlib parser.
+structured = ["openpyxl>=3.1", "defusedxml>=0.7"]
+embed = ["sentence-transformers>=2.7"]
+vector = ["qdrant-client>=1.9"]
+mcp = ["mcp>=1.2"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+all = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "markitdown[all]>=0.0.1a2",
+    "openpyxl>=3.1",
+    "defusedxml>=0.7",
+    "sentence-transformers>=2.7",
+    "qdrant-client>=1.9",
+    "mcp>=1.2",
+]
+# For everything including dev tooling, install: ".[all,dev]"
+
+[project.scripts]
+knowledge = "knowledge.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/knowledge"]
+# Ship the control-panel UI with the package.
+artifacts = ["src/knowledge/api/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008", "UP042"]

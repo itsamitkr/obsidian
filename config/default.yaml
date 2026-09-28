@@ -1,0 +1,189 @@
+# ===========================================================================
+# Knowledge System - default configuration
+# ---------------------------------------------------------------------------
+# This file is the declarative source of defaults. Environment variables
+# (prefix KS_, nested with __) override anything set here. A user-supplied
+# config file may be passed with `--config` / KS_CONFIG_FILE and is merged
+# on top of these defaults.
+# ===========================================================================
+
+vault_path: ./knowledge-vault
+# state_dir is intentionally omitted: it defaults to <vault_path>/.knowledge so
+# derived state always co-locates with the vault it describes. Override only if
+# you deliberately want state stored elsewhere.
+# state_dir: ./knowledge-vault/.knowledge
+
+# Flat, metadata-driven layout. Organization comes from frontmatter
+# (domain/topic), tags and [[wiki links]] -- NOT from a fixed folder tree.
+# All ingested notes land in a single content folder; Obsidian's graph,
+# tag pane and search do the organizing.
+vault_layout:
+  inbox: 00-Inbox
+  content_dir: Notes            # where processed notes are written
+  sources: 90-Indexes/Sources
+  templates: 90-Indexes/Templates
+  # Optional: pre-declare domain labels only if you want the (optional) Jev
+  # classifier to pick from a fixed set. Empty = fully emergent from content.
+  domains: []
+
+ingest:
+  inbox_dir: 00-Inbox
+  auto_git_commit: false
+  # After a file is archived to Sources/, clear it from the inbox rather than
+  # keeping a second copy. processed_marker is the fallback folder used only if
+  # the archive copy is missing, so a file is never lost.
+  move_processed_sources: true
+  processed_marker: .processed
+  watch_debounce_seconds: 2.0
+  supported_extensions:
+    - .pdf
+    - .docx
+    - .pptx
+    - .xlsx
+    - .xls
+    - .html
+    - .htm
+    - .csv
+    - .txt
+    - .md
+    - .json
+    - .xml
+    - .png
+    - .jpg
+    - .jpeg
+  markdown_lint: true
+
+converter:
+  provider: auto            # markitdown | auto
+
+# ---------------------------------------------------------------------------
+# Upload classification: every file is routed to one of three tracks before
+# any work happens. The decision is deterministic (extension + a cheap, bounded
+# shape probe) and never uses an LLM. See docs/INGESTION.md.
+#
+#   document   -> MarkItDown -> Markdown -> chunks -> embeddings -> graph
+#   structured -> structured parser -> schema + records + entities
+#   analytical -> staged for analysis; indexed only on explicit opt-in
+# ---------------------------------------------------------------------------
+classification:
+  enabled: true             # false = everything takes the document track
+  document_extensions:
+    - .pdf
+    - .docx
+    - .doc
+    - .pptx
+    - .ppt
+    - .html
+    - .htm
+    - .txt
+    - .md
+    - .markdown
+    - .rtf
+    - .epub
+    - .msg                  # emails
+    - .eml
+    - .png                  # images MarkItDown can read
+    - .jpg
+    - .jpeg
+  structured_extensions:
+    - .csv
+    - .tsv
+    - .xlsx
+    - .xlsm
+    - .xls
+    - .json
+    - .xml
+
+  # A structured file that trips ANY threshold below looks like a model or a
+  # raw dataset rather than reference knowledge, so it is staged instead of
+  # indexed. Indexing a financial model would fill the vector store with
+  # thousands of meaningless number-cells.
+  analytical:
+    require_optin: true             # false = index analytical files directly
+    staging_dir: 90-Indexes/Analytical
+    max_bytes: 2000000              # > 2 MB
+    max_rows: 5000                  # CSV/TSV rows, or JSON array length
+    max_sheets: 5                   # workbook tabs
+    max_formula_cells: 200          # formula density => a model, not data
+    scan_cell_limit: 20000          # bounds the probe on huge workbooks
+
+# How tabular/record data becomes knowledge. Records are embedded as
+# "column: value" blocks: raw CSV rows embed badly because the column names are
+# lost and digits dominate the tokens.
+structured:
+  max_rows_indexed: 2000    # rows materialised per table
+  records_per_chunk: 20     # records grouped into one vector chunk
+  sample_rows: 10           # rows shown in the Markdown note
+  max_entity_distinct: 50   # <= this many distinct values => graph entities
+  max_entity_value_len: 60  # longer values are free text, not entities
+
+chunking:
+  max_tokens: 512
+  min_tokens: 64
+  overlap_tokens: 32
+  chars_per_token: 4        # rough heuristic for token estimation
+  respect_headings: true
+
+embedding:
+  provider: hash            # sentence_transformers | openai | hash
+  model: sentence-transformers/all-MiniLM-L6-v2
+  dim: 384
+  base_url: null
+  api_key: null
+  batch_size: 32
+
+vector:
+  provider: memory          # qdrant | memory
+  url: http://localhost:6333
+  collection: knowledge
+  api_key: null
+  distance: cosine
+
+graph:
+  provider: sqlite          # sqlite | memory
+
+# Optional reasoning/enrichment LLM. "openai" is the wire PROTOCOL, not the
+# vendor: it covers Ollama, LM Studio, vLLM and OpenAI. Default is off, so the
+# system needs no model and spends no tokens until you opt in.
+llm:
+  provider: "null"          # openai | null
+  base_url: http://localhost:11434/v1
+  api_key: null
+  model: llama3.2:3b        # e.g. an Ollama tag, or an OpenAI model name
+  enrichment_mode: selective  # off | on | selective
+  max_tokens: 1024
+  temperature: 0.1
+  # Local CPU inference is slow, and the first call also pays model load time.
+  timeout_seconds: 180.0
+  # Ollama-specific hints; other servers ignore them. Without keep_alive the
+  # model is evicted after ~5 min, so every note in a run reloads it.
+  keep_alive: 30m
+  num_ctx: null
+  # Probe the endpoint once per minute so a stopped Ollama degrades to
+  # "no LLM available" instead of erroring on every document.
+  health_check: true
+  health_cache_seconds: 60.0
+  # Heuristics controlling when selective enrichment fires. In the flat
+  # layout, enrichment triggers mainly on "no topic yet" and long documents.
+  selective:
+    important_domains: []
+    min_document_chars: 800
+    classification_confidence_threshold: 0.6
+
+jev:
+  provider: stub            # stub | <real adapter>
+  enabled: false
+
+api:
+  host: 127.0.0.1
+  port: 8000
+
+# Public tunnel (runs locally; nothing is deployed to a cloud).
+# ngrok's free plan gives ONE stable dev domain -- no domain of your own needed
+# -- so the claude.ai connector URL survives restarts. Needs an authtoken:
+#   ngrok config add-authtoken <TOKEN>
+# See docs/TUNNEL.md.
+tunnel:
+  provider: ngrok
+  ngrok_domain: null      # optional pin, e.g. foo-bar.ngrok-free.dev
+  mcp_port: 8765

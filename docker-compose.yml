@@ -1,0 +1,37 @@
+# ===========================================================================
+# Local stack: Qdrant (vector DB) + the knowledge system.
+# The vault and derived state are mounted as volumes so the Markdown/Git
+# repository remains the durable source of truth on the host.
+# ===========================================================================
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: knowledge-qdrant
+    ports:
+      - "6333:6333"   # REST
+      - "6334:6334"   # gRPC
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  knowledge:
+    build: .
+    container_name: knowledge-app
+    depends_on:
+      - qdrant
+    environment:
+      KS_VECTOR__PROVIDER: qdrant
+      KS_VECTOR__URL: http://qdrant:6333
+      KS_EMBEDDING__PROVIDER: sentence_transformers
+      # LLM is optional; point at a host Ollama if desired:
+      # KS_LLM__PROVIDER: openai
+      # KS_LLM__BASE_URL: http://host.docker.internal:11434/v1
+      # State dir derives from the vault path automatically.
+      KS_VAULT_PATH: /vault
+    volumes:
+      - ./knowledge-vault:/vault
+    ports:
+      - "8000:8000"
+    # Watch the inbox by default. Override to `serve` for the HTTP API.
+    command: ["knowledge", "watch"]
+    restart: unless-stopped
