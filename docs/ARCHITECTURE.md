@@ -30,7 +30,7 @@ knowledge/
 ├── converters/        # DocumentConverter: MarkItDown + builtin plaintext
 ├── structured/        # StructuredParser + Markdown/record renderers (track 2)
 ├── embeddings/        # EmbeddingProvider: hash | sentence_transformers | openai
-├── vectorstore/       # VectorStore: memory | qdrant
+├── vectorstore/       # VectorStore: memory | qdrant_local (embedded) | qdrant (server)
 ├── graph/             # GraphStore (memory|sqlite) + GraphBuilder (from Markdown)
 ├── llm/               # LLMProvider: null | openai-compatible (Ollama/LM Studio/vLLM)
 ├── jev/               # JevProvider: stub (isolated) | real adapter slot
@@ -60,7 +60,7 @@ source file
    |      -> frontmatter/metadata
    |      -> semantic chunker (heading-aware) + content hashes
    |      -> Enricher (optional, selective LLM + Jev) [compact brief only]
-   |      -> write canonical Markdown           [source of truth]
+   |      -> write canonical Markdown           [source of truth; keeps '## My notes']
    |      -> EmbeddingProvider -> VectorStore.upsert  [only changed chunks]
    |      -> GraphBuilder -> GraphStore         [links/tags/related]
    |
@@ -68,7 +68,7 @@ source file
    |      -> preserve original (Sources/)
    |      -> StructuredParser -> tables, columns, records, entities
    |      -> record blocks ("column: value")    [not Markdown-derived]
-   |      -> write canonical Markdown           [schema + row sample]
+   |      -> write canonical Markdown           [schema + row sample; keeps '## My notes']
    |      -> EmbeddingProvider -> VectorStore.upsert
    |      -> GraphBuilder -> GraphStore         [+ entity nodes, 'mentions']
    |
@@ -83,9 +83,10 @@ source file
    -> clear source from the inbox (already archived)
 ```
 
-Each arrow advances a checkpoint in the manifest (`JobStage`), so a crash
-resumes rather than corrupts. The manifest also stores the chosen `track`,
-which is what `/stats` aggregates for the panel.
+Each arrow records a checkpoint in the manifest (`JobStage`). After a crash the
+file is still in the inbox, and the retry re-runs every stage, each of which is
+safe to repeat. The manifest also stores the chosen `track`, which is what
+`/stats` aggregates for the panel.
 
 ## Derived-index rebuild
 
@@ -98,7 +99,10 @@ knowledge rebuild-graph            # re-derive nodes/edges from links
 ```
 
 Content hashing means an incremental rebuild (`--incremental`) re-embeds only
-chunks whose text changed.
+chunks whose text changed; it also drops deleted notes and re-points renamed
+ones. Structured notes are rebuilt from their archived original, so their
+record chunks survive. The index records the embedding setup that built it,
+and search/ingest refuse to run after a model change until you rebuild.
 
 ## Swapping components
 
@@ -106,7 +110,7 @@ chunks whose text changed.
 |--------|-----|
 | Use Qdrant instead of memory | `KS_VECTOR__PROVIDER=qdrant_local` (embedded), or `qdrant` + `KS_VECTOR__URL` for your own server |
 | Use real embeddings | `KS_EMBEDDING__PROVIDER=sentence_transformers` (or `openai`) |
-| Add a local LLM | `ollama pull llama3.2:3b`, then `KS_LLM__PROVIDER=openai` + `KS_LLM__MODEL=llama3.2:3b` (base_url already points at Ollama) |
+| Add a local LLM | the installer does it (Ollama + `llama3.2:3b`); by hand: `ollama pull <model>`, then `KS_LLM__PROVIDER=openai` + `KS_LLM__MODEL=<model>` |
 | Use a hosted LLM instead | same provider, change `KS_LLM__BASE_URL` + `KS_LLM__API_KEY` — note this sends briefs off-machine |
 | Add Neo4j | implement `GraphStore`, register in `graph.build_graph_store` |
 | Add a converter | implement `DocumentConverter`, register in `converters.build_converter` |

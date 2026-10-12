@@ -7,6 +7,11 @@ Configuration is layered, lowest to highest precedence:
 3. A user config file: `--config path.yaml` or `KS_CONFIG_FILE`.
 4. Environment variables (prefix `KS_`, nested with `__`), and `.env`.
 
+The defaults below are the built-in ones. The installer copies `.env.example`
+to `.env`, which switches on real search (`sentence_transformers` embeddings,
+`qdrant_local` vectors) and, if Ollama was installed, sets
+`llm.provider=openai` with the pulled model.
+
 Environment variables always override YAML. Example:
 
 ```bash
@@ -212,5 +217,6 @@ set `vault_layout.domains` to your labels and route notes yourself — but note
 that metadata (`domain`/`topic`/`tags`) remains the source of truth either
 way, and the graph/search work identically regardless of folders.
 
-The default provider is `null`, so out of the box the system consumes **no**
-LLM tokens at all.
+The built-in LLM provider is `null`, which consumes **no** LLM tokens at all.
+The installer's Ollama setup runs the model on your machine, so enrichment
+still costs nothing and sends nothing off-machine.

@@ -93,7 +93,8 @@ Stages 1–3 and 12–14 are shared; the middle differs per track.
 7. **Chunk** the Markdown with the heading-aware semantic chunker; each chunk
    gets a content hash.
 8. **Enrich** (optional, selective) — a compact document *brief* only.
-9. **Write** the canonical Markdown note.
+9. **Write** the canonical Markdown note, keeping your `## My notes` section
+   and frontmatter (see "Editing generated notes" below).
 10. **Embed** only chunks whose content hash changed; upsert to the vector
     store; delete stale chunks.
 11. **Graph** — re-derive relationships from links/tags/related.
@@ -179,10 +180,16 @@ State lives in SQLite under `.knowledge/state/state.sqlite`:
 - **`document_chunks`** — the content hash of every indexed chunk, enabling
   "re-embed only what changed".
 
-Because every stage advances `stage`, a crash mid-pipeline leaves a partial
-record; re-running resumes safely. Re-processing an unchanged file is a no-op.
+Every stage records its checkpoint in `stage`. A crash mid-pipeline leaves the
+file in the inbox with a partial record; the retry re-runs every stage, each of
+which is safe to repeat (notes are rewritten, only changed chunks are
+re-embedded, the graph is re-derived). Re-processing an unchanged file is a
+no-op.
 
-## Event handling
+## Event handling (inbox watcher)
+
+These are events in `00-Inbox/`. For notes deleted or renamed in the vault, see
+"Deleting or renaming notes" above.
 
 | Event | Behaviour |
 |-------|-----------|

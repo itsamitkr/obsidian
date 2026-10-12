@@ -50,10 +50,10 @@ must be installed: the system stops with an install hint rather than quietly
 switching to the weaker defaults.
 
 A reasoning LLM is **not** a Python dependency: it is an external
-OpenAI-compatible server you point at. There is nothing to install unless you
-want enrichment — see
-[README](../README.md#optional-a-local-llm-for-enrichment) for the Ollama
-walkthrough. Without it, ingestion is fully deterministic and spends no tokens.
+OpenAI-compatible server you point at. The installer sets up Ollama for you
+(skip with `-NoLlm` / `--no-llm`); see
+[README](../README.md#optional-a-local-llm-for-enrichment) for other servers.
+Without one, ingestion is fully deterministic and spends no tokens.
 
 ## Repository model: code vs. vault
 

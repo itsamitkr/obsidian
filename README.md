@@ -187,7 +187,7 @@ sequenceDiagram
             P->>P: parse tables → schema, records, entities
             P->>P: chunk records as "column: value" blocks
         end
-        P->>MD: write note → Notes/
+        P->>MD: write note → Notes/ (keeps your My notes section)
         P->>V: embed + upsert changed chunks only
         P->>G: derive nodes/edges from links, tags, entities
         P->>P: lint · manifest=completed · optional git commit
