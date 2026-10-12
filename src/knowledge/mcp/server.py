@@ -55,8 +55,9 @@ def build_server(
 ):
     """Build the MCP server.
 
-    read_only: register only retrieval tools. Use when exposing the server
-    over a network so a leaked URL cannot mutate the vault.
+    read_only: register only retrieval tools, so neither a reachable URL nor
+    instructions inside an ingested document can make the agent change the
+    vault. The CLI turns this off only with ``--allow-writes``.
     ks:        share an already-open KnowledgeSystem. Required when a host
                process (e.g. the Control Panel) also has the vault open:
                embedded Qdrant allows only ONE client per storage folder, so
@@ -152,8 +153,8 @@ def build_server(
         return [e.model_dump() for e in ks.graph_store.broken_links()]
 
     # ---- Tools: mutation -------------------------------------------------
-    # Not registered in read-only mode, so a network-exposed server cannot
-    # modify the vault (defence in depth for proxied/tunnelled deployments).
+    # Not registered in read-only mode (the CLI default), so the agent can't
+    # be talked into modifying the vault.
     if not read_only:
 
         @mcp.tool()
@@ -220,18 +221,19 @@ def build_server(
     return mcp
 
 
-def run_stdio(config: str | None = None) -> None:
-    """Run over stdio -- for local clients like Claude Desktop / Claude Code."""
-    build_server(config).run("stdio")
+def run_stdio(config: str | None = None, read_only: bool = True) -> None:
+    """Run over stdio -- for local clients like Claude Desktop / Claude Code.
+
+    Read-only by default; the write tools are opt-in (``--allow-writes``).
+    """
+    build_server(config, read_only=read_only).run("stdio")
 
 
 def _api_key_middleware(app, api_key: str, header: str = "x-api-key"):
     """ASGI middleware requiring a shared secret header on every request.
 
     Useful for MCP clients (or a local reverse proxy) that can set headers.
-    Note that claude.ai's custom-connector UI cannot send static headers, so
-    this is NOT usable for a claude.ai connector -- prefer ``--read-only``
-    there. Requests without a valid key are rejected with 401.
+    Requests without a valid key are rejected with 401.
     """
     header_bytes = header.lower().encode()
     expected = api_key.encode()
@@ -267,10 +269,9 @@ def _api_key_middleware(app, api_key: str, header: str = "x-api-key"):
 def _transport_security(allowed_hosts: list[str] | None, public: bool):
     """Build TransportSecuritySettings for HTTP transports.
 
-    The MCP SDK blocks requests whose Host header isn't localhost (DNS
-    rebinding protection), which returns HTTP 421 behind a tunnel. When
-    serving through a tunnel the incoming Host is the public domain, so it
-    must be allow-listed (``allowed_hosts``) or the check disabled (``public``).
+    The MCP SDK rejects requests whose Host header isn't localhost (DNS
+    rebinding protection) with HTTP 421. ``allowed_hosts`` allow-lists more
+    hosts; ``public`` disables the check (reverse-proxy use only).
     """
     try:
         from mcp.server.transport_security import TransportSecuritySettings
@@ -278,7 +279,7 @@ def _transport_security(allowed_hosts: list[str] | None, public: bool):
         return None
 
     if public:
-        # Accept any Host/Origin. Only safe behind an authenticated tunnel.
+        # Accept any Host/Origin. Only safe behind an authenticated proxy.
         return TransportSecuritySettings(enable_dns_rebinding_protection=False)
     if allowed_hosts:
         origins = []
@@ -300,18 +301,17 @@ def run_http(
     api_key: str | None = None,
     read_only: bool = False,
 ) -> None:
-    """Run over HTTP -- required for *remote* clients such as claude.ai web,
-    which reach the server from Anthropic's cloud over HTTPS.
+    """Run over HTTP for local HTTP MCP clients. Binds 127.0.0.1 by default.
 
-    SECURITY: this server performs NO authentication. Exposing it publicly
-    lets anyone who can reach the URL read and modify your vault. Only expose
-    it through an authenticated tunnel / reverse proxy, and never bind to a
-    public interface without one. See docs/MCP.md.
+    SECURITY: this server performs NO authentication. Anyone who can reach
+    the URL can read (and, unless read_only, modify) your vault. Never bind
+    to a non-local interface without an authenticated reverse proxy.
+    See docs/MCP.md.
 
-    allowed_hosts: Host header values to accept (e.g. the tunnel domain).
+    allowed_hosts: Host header values to accept (e.g. a reverse-proxy hostname).
     public:        accept any Host/Origin (disables DNS-rebinding protection).
-    api_key:       require this shared secret in the x-api-key header. Only
-                   works with clients that can set headers -- claude.ai cannot.
+    api_key:       require this shared secret in the x-api-key header (for
+                   clients that can set headers).
     read_only:     expose retrieval tools only (no create/ingest/rebuild).
 
     transport: "streamable-http" (endpoint /mcp) or "sse" (endpoint /sse).

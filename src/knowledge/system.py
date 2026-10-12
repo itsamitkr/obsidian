@@ -7,6 +7,8 @@ swappable via configuration without touching call sites.
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -26,6 +28,15 @@ from .structured import StructuredParser
 from .vectorstore import build_vector_store
 
 T = TypeVar("T")
+
+
+class IndexMismatchError(RuntimeError):
+    """The vector index was built with a different embedding setup."""
+
+
+def _describe(fp: dict) -> str:
+    model = f" ({fp['model']})" if fp.get("model") else ""
+    return f"{fp.get('provider')}{model}, dim {fp.get('dim')}"
 
 
 class KnowledgeSystem:
@@ -105,6 +116,55 @@ class KnowledgeSystem:
             )
 
         return self._provider("vector_store", _build)
+
+    # ---- index fingerprint -----------------------------------------------
+    # Vectors from different models (or hash vs. a model) share a width of
+    # 384, so mixing them raises no error -- search just gets worse. The index
+    # records what built it, and search/ingest refuse to run on a mismatch.
+
+    @property
+    def _index_meta_path(self):
+        return self.settings.state_dir / "state" / "index_meta.json"
+
+    def index_fingerprint(self) -> dict:
+        """The embedding setup the current config would write vectors with."""
+        cfg = self.settings.embedding
+        return {
+            "provider": cfg.provider,
+            "model": cfg.model if cfg.provider != "hash" else None,
+            "dim": cfg.dim,
+        }
+
+    def index_built_with(self) -> dict | None:
+        try:
+            return json.loads(self._index_meta_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+
+    def index_mismatch(self) -> str | None:
+        """A readable message if the index was built with another setup."""
+        stored = self.index_built_with()
+        current = self.index_fingerprint()
+        if stored is None or stored == current:
+            return None
+        return (
+            f"The vector index was built with {_describe(stored)}, but the "
+            f"config now uses {_describe(current)}. Run "
+            "`knowledge rebuild-vector-index` to rebuild it with the current "
+            "setup, or change the config back."
+        )
+
+    def ensure_index_matches(self) -> None:
+        msg = self.index_mismatch()
+        if msg:
+            raise IndexMismatchError(msg)
+
+    def record_index_fingerprint(self) -> None:
+        path = self._index_meta_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.index_fingerprint()), encoding="utf-8")
+        os.replace(tmp, path)
 
     # ---- warm-up ---------------------------------------------------------
 
@@ -211,6 +271,8 @@ class KnowledgeSystem:
                 "embedder_loaded": "embedder" in self._providers,
                 "vector_store": self.settings.vector.provider,
                 "vector_loaded": "vector_store" in self._providers,
+                "index_built_with": self.index_built_with(),
+                "index_mismatch": self.index_mismatch(),
                 "graph_store": self.settings.graph.provider,
                 "llm": self.settings.llm.provider,
                 "llm_model": (
@@ -228,6 +290,8 @@ class KnowledgeSystem:
             "embedding_dim": self.embedder.dim,
             "vector_store": self.vector_store.name,
             "vector_healthy": self.vector_store.health_check(),
+            "index_built_with": self.index_built_with(),
+            "index_mismatch": self.index_mismatch(),
             "graph_store": self.graph_store.name,
             "llm": self.llm.name,
             "llm_available": self.llm.available,

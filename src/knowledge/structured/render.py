@@ -45,10 +45,9 @@ def render_markdown(doc: StructuredDoc, title: str, cfg: StructuredConfig) -> st
 
     for table in doc.tables:
         parts += ["", f"## {table.name}", ""]
-        parts.append(
-            f"{table.row_count} row(s), {len(table.columns)} column(s)"
-            + (" (sample indexed)" if table.truncated else "")
-        )
+        parts.append(f"{table.row_count} row(s), {len(table.columns)} column(s)")
+        if table.truncated:
+            parts += ["", _truncation_note(table)]
         parts += ["", "### Schema", ""]
         parts.append(
             _md_table(
@@ -69,6 +68,16 @@ def render_markdown(doc: StructuredDoc, title: str, cfg: StructuredConfig) -> st
         parts.append(", ".join(f"`{e}`" for e in doc.entities[:100]))
 
     return "\n".join(parts) + "\n"
+
+
+def _truncation_note(table: Table) -> str:
+    """Says plainly that search only covers part of the table."""
+    excluded = table.row_count - table.rows_indexed
+    return (
+        f"> Partial index: only the first {table.rows_indexed} of "
+        f"{table.row_count} rows are searchable ({excluded} not indexed). "
+        "Use the original file for questions about the whole table."
+    )
 
 
 def _record_text(record: dict) -> str:
@@ -94,11 +103,10 @@ def record_blocks(
     blocks: list[tuple[list[str], str]] = []
 
     for table in doc.tables:
-        schema_lines = [
-            f"Table: {table.name}",
-            f"Rows: {table.row_count}",
-            "Columns:",
-        ]
+        schema_lines = [f"Table: {table.name}", f"Rows: {table.row_count}"]
+        if table.truncated:
+            schema_lines.append(_truncation_note(table).removeprefix("> "))
+        schema_lines.append("Columns:")
         schema_lines += [
             f"  - {c.name} ({c.dtype}"
             + (f", examples: {', '.join(c.samples[:3])}" if c.samples else "")

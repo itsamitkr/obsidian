@@ -26,11 +26,11 @@ htmlcov/
 # Environment
 .env
 
-# Qdrant local storage
-qdrant_storage/
+# Scratch files from AI-assistant sessions
+.agents/
 
-# Downloaded local tooling binaries (e.g. ngrok)
-tools/
+# uv and the Python it manages, installed by install.cmd / install.sh
+.tools/
 
 # OS
 .DS_Store

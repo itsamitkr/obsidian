@@ -1,7 +1,7 @@
 name: CI
 
 # Proves that a fresh clone installs cleanly and the test suite passes on the
-# dependency-free fallback stack (no Qdrant/LLM/network required).
+# dependency-free default providers (no Qdrant/LLM/network required).
 on:
   push:
     branches: [main, master]

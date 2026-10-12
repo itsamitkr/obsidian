@@ -30,7 +30,7 @@ from pathlib import Path
 
 from ..classification import Classification, Track
 from ..enrichment import EnrichmentResult
-from ..markdown.frontmatter import dump_frontmatter
+from ..markdown.frontmatter import dump_frontmatter, load_note
 from ..models import (
     Chunk,
     Document,
@@ -47,6 +47,83 @@ from ..structured import record_blocks, render_markdown
 from ..system import KnowledgeSystem
 from ..vectorstore.base import VectorPoint
 from .lint import lint_markdown
+
+# ---- human edits vs. regenerated notes -------------------------------------
+
+USER_SECTION = "## My notes"
+
+# Frontmatter the pipeline writes; regenerated on every ingest.
+_GENERATED_KEYS = set(Frontmatter.model_fields) | {
+    "summary", "entities", "record_count", "records_indexed", "tables",
+    "truncated_tables",
+}
+# Generated fields the user may set or change; an existing value wins.
+_USER_WINS = ("domain", "topic", "status", "created_at")
+# Lists merged from both sides.
+_UNION = ("tags", "related", "aliases")
+
+
+def user_section(body: str) -> str | None:
+    """The ``## My notes`` section of a note (heading included), if any."""
+    lines = body.splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines)
+         if ln.strip().lower() == USER_SECTION.lower()),
+        None,
+    )
+    if start is None:
+        return None
+    end = next(
+        (j for j in range(start + 1, len(lines)) if lines[j].startswith("## ")),
+        len(lines),
+    )
+    section = "\n".join(lines[start:end]).strip()
+    return section if section != USER_SECTION else None  # heading only: nothing to keep
+
+
+def _merge_frontmatter(new: dict, old: dict) -> dict:
+    merged = dict(new)
+    for key, value in old.items():
+        if key in _UNION and isinstance(value, list):
+            merged[key] = list(dict.fromkeys([*(merged.get(key) or []), *value]))
+        elif key in _USER_WINS and value not in (None, "", []):
+            merged[key] = value
+        elif key not in _GENERATED_KEYS:
+            merged[key] = value  # added by the user
+    return merged
+
+
+def structured_chunks(
+    document: Document,
+    doc_struct,
+    cfg,
+    my_notes: str | None = None,
+) -> list[Chunk]:
+    """Chunks for a structured note: schema + record groups from the data.
+
+    Shared by ingestion and rebuild. Rebuilding from the note's Markdown would
+    only see the schema summary and a 10-row sample, so record-level search
+    would be lost; the data has to be re-parsed from the archived original.
+    """
+    blocks = record_blocks(doc_struct, cfg)
+    if my_notes:
+        blocks.append((["My notes"], my_notes))
+    return [
+        Chunk(
+            id=f"{document.id}::{i}",
+            document_id=document.id,
+            source_file=document.source_file,
+            markdown_path=document.markdown_path,
+            heading_path=heading,
+            domain=document.domain,
+            topic=document.topic,
+            chunk_index=i,
+            text=text,
+            content_hash=sha256_text(text),
+            token_estimate=max(1, len(text) // 4),
+        )
+        for i, (heading, text) in enumerate(blocks)
+    ]
 
 
 @dataclass
@@ -83,16 +160,93 @@ class IngestionPipeline:
     def _target_markdown_path(self, document_id: str) -> Path:
         return self.settings.content_path / f"{document_id}.md"
 
+    def _document_id(
+        self, source_path: Path, rel_source: str, previous_id: str | None
+    ) -> str:
+        """Note id for a source.
+
+        A source that was ingested before keeps its existing id, so its note
+        is updated in place (existing notes are never renamed). A new source
+        gets an id from its file name, not its title, so two documents titled
+        "Meeting Notes" no longer share one note. If that name is already taken
+        by another note, a short hash of the source path keeps them apart.
+        """
+        if previous_id:
+            return previous_id
+        base = document_id_for(source_path)
+        if not self._target_markdown_path(base).exists():
+            return base
+        return f"{base}-{sha256_text(rel_source)[:6]}"
+
+    # ---- writing notes (human edits survive re-ingest) -------------------
+
+    def _write_note(
+        self, md_path: Path, fm_dict: dict, body: str, document: Document
+    ) -> tuple[dict, str, str | None]:
+        """Write the generated note, keeping what the user added by hand.
+
+        Re-ingesting regenerates the note from its source, except:
+
+        * a ``## My notes`` section (up to the next ``##`` heading) is carried
+          over and appended to the new body;
+        * frontmatter the user owns is kept: ``domain``, ``topic``, ``status``
+          and ``created_at`` when set, ``tags``/``related``/``aliases`` merged,
+          and any key the pipeline doesn't generate.
+
+        Returns ``(frontmatter, body, kept_section)``; also updates
+        ``document`` so chunking and indexing see the written note.
+        """
+        kept: str | None = None
+        if md_path.exists():
+            try:
+                old_fm, old_body = load_note(md_path)
+            except Exception:  # noqa: BLE001 - unreadable note: regenerate it
+                old_fm, old_body = {}, ""
+            fm_dict = _merge_frontmatter(fm_dict, old_fm)
+            kept = user_section(old_body)
+            if kept and kept == user_section(body):
+                kept = None  # the source itself has this section; don't duplicate it
+            if kept:
+                body = f"{body.rstrip()}\n\n{kept}\n"
+
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.write_text(dump_frontmatter(fm_dict, body), encoding="utf-8")
+
+        document.body = body
+        document.domain = fm_dict.get("domain")
+        document.topic = fm_dict.get("topic")
+        for c in document.chunks:
+            c.domain, c.topic = document.domain, document.topic
+        return fm_dict, body, kept
+
     # ---- source preservation --------------------------------------------
 
-    def _preserve_source(self, source_path: Path) -> str:
+    def _archive_path(self, source_path: Path, source_hash: str) -> Path:
+        """Where this exact content is (or will be) archived in Sources/.
+
+        Keeps the plain file name when it's free or already holds the same
+        content. A different file with the same name gets a content-hash
+        suffix instead of overwriting the earlier original.
+        """
+        dest = self.settings.sources_path / source_path.name
+        if dest.exists() and sha256_bytes(dest.read_bytes()) != source_hash:
+            dest = dest.with_name(f"{dest.stem}-{source_hash[:8]}{dest.suffix}")
+        return dest
+
+    def _preserve_source(self, source_path: Path, source_hash: str) -> Path:
         """Copy the original into the Sources tree, keeping the original."""
-        dest_dir = self.settings.sources_path
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / source_path.name
-        if source_path.resolve() != dest.resolve():
-            shutil.copy2(source_path, dest)
-        return str(dest.relative_to(self.settings.vault_path)).replace("\\", "/")
+        self.settings.sources_path.mkdir(parents=True, exist_ok=True)
+        dest = self._archive_path(source_path, source_hash)
+        if source_path.resolve() == dest.resolve():
+            return dest
+        if dest.exists() and sha256_bytes(dest.read_bytes()) == source_hash:
+            return dest  # already archived
+        # New file, or a hash-named copy left incomplete by a crash.
+        shutil.copy2(source_path, dest)
+        return dest
+
+    def _vault_rel(self, path: Path) -> str:
+        return str(path.relative_to(self.settings.vault_path)).replace("\\", "/")
 
     # ---- git -------------------------------------------------------------
 
@@ -163,9 +317,12 @@ class IngestionPipeline:
                 reason=f"duplicate content of {dup.source_path}",
             )
 
+        # Carry the previous document id forward: a re-ingested source updates
+        # its existing note even if the converted title changed.
         entry = ManifestEntry(source_path=rel_source, source_hash=source_hash,
                               stage=JobStage.detected,
-                              track=classification.track.value)
+                              track=classification.track.value,
+                              document_id=existing.document_id if existing else None)
         self.ks.state.upsert_manifest(entry)
 
         # Analytical files are working material, not knowledge: stage them and
@@ -206,7 +363,8 @@ class IngestionPipeline:
         classification: Classification | None = None,
     ) -> IngestOutcome:
         # 3. preserve original
-        preserved_rel = self._preserve_source(source_path)
+        archived = self._preserve_source(source_path, source_hash)
+        preserved_rel = self._vault_rel(archived)
 
         # 4. convert (deterministic)
         conversion = self.ks.converter.convert(source_path)
@@ -217,7 +375,7 @@ class IngestionPipeline:
         #    authored in frontmatter or assigned by optional enrichment, not
         #    derived from the folder (flat, metadata-driven organization).
         title = (conversion.title or source_path.stem).strip() or source_path.stem
-        document_id = document_id_for(source_path, title)
+        document_id = self._document_id(source_path, rel_source, entry.document_id)
         now = utcnow()
         fm = Frontmatter(
             id=document_id,
@@ -274,10 +432,11 @@ class IngestionPipeline:
             related_md = "\n".join(f"- [[{link}]]"
                                    for link in enrichment.suggested_links)
             body = f"{body}\n\n## Related\n{related_md}\n"
-        md_path.parent.mkdir(parents=True, exist_ok=True)
         fm_dict = {**fm.model_dump(mode="json"), **extra_fm}
-        md_path.write_text(dump_frontmatter(fm_dict, body), encoding="utf-8")
-        document.body = body
+        fm_dict, body, kept = self._write_note(md_path, fm_dict, body, document)
+        if kept:
+            # Re-chunk so the preserved "## My notes" section is searchable.
+            document.chunks = self.ks.chunker.chunk_document(document)
         entry.stage = JobStage.written
         self.ks.state.upsert_manifest(entry)
 
@@ -301,7 +460,7 @@ class IngestionPipeline:
         self.ks.state.upsert_manifest(entry)
 
         # 13. clear the source out of the inbox (already archived in Sources/)
-        self._finalize_source(source_path)
+        self._finalize_source(source_path, archived, source_hash)
 
         # 12. manifest complete, then optional git commit. `completed` is the
         #     terminal stage; the commit is a side effect and does not change it.
@@ -337,14 +496,15 @@ class IngestionPipeline:
         so retrieval sees ``vendor: Acme / region: EU`` rather than a naked CSV
         line.
         """
-        preserved_rel = self._preserve_source(source_path)
+        archived = self._preserve_source(source_path, source_hash)
+        preserved_rel = self._vault_rel(archived)
 
         doc_struct = self.ks.structured_parser.parse(source_path)
         entry.stage = JobStage.converted
         self.ks.state.upsert_manifest(entry)
 
         title = source_path.stem
-        document_id = document_id_for(source_path, title)
+        document_id = self._document_id(source_path, rel_source, entry.document_id)
         now = utcnow()
         fm = Frontmatter(
             id=document_id,
@@ -368,21 +528,9 @@ class IngestionPipeline:
         )
 
         # Record-level chunks (not Markdown-derived) for useful embeddings.
-        blocks = record_blocks(doc_struct, self.settings.structured)
-        document.chunks = [
-            Chunk(
-                id=f"{document_id}::{i}",
-                document_id=document_id,
-                source_file=preserved_rel,
-                markdown_path=rel_md,
-                heading_path=heading,
-                chunk_index=i,
-                text=text,
-                content_hash=sha256_text(text),
-                token_estimate=max(1, len(text) // 4),
-            )
-            for i, (heading, text) in enumerate(blocks)
-        ]
+        document.chunks = structured_chunks(
+            document, doc_struct, self.settings.structured
+        )
         entry.document_id = document_id
         entry.markdown_path = rel_md
         entry.stage = JobStage.chunked
@@ -391,8 +539,12 @@ class IngestionPipeline:
         # Entities become wiki links so they join the graph deterministically.
         extra_fm: dict = {
             "record_count": doc_struct.record_count,
+            "records_indexed": doc_struct.records_indexed,
             "tables": [t.name for t in doc_struct.tables],
         }
+        truncated = [t.name for t in doc_struct.tables if t.truncated]
+        if truncated:
+            extra_fm["truncated_tables"] = truncated
         if doc_struct.entities:
             fm.related = [f"[[{e}]]" for e in doc_struct.entities[:50]]
             extra_fm["entities"] = doc_struct.entities[:100]
@@ -401,11 +553,14 @@ class IngestionPipeline:
             ) + "\n"
             document.body = body
 
-        md_path.parent.mkdir(parents=True, exist_ok=True)
-        md_path.write_text(
-            dump_frontmatter({**fm.model_dump(mode="json"), **extra_fm}, body),
-            encoding="utf-8",
+        _, body, kept = self._write_note(
+            md_path, {**fm.model_dump(mode="json"), **extra_fm}, body, document
         )
+        if kept:
+            # Record chunks come from the data; add the user's section on top.
+            document.chunks = structured_chunks(
+                document, doc_struct, self.settings.structured, my_notes=kept
+            )
         entry.stage = JobStage.written
         self.ks.state.upsert_manifest(entry)
 
@@ -424,7 +579,7 @@ class IngestionPipeline:
         entry.stage = JobStage.linted
         self.ks.state.upsert_manifest(entry)
 
-        self._finalize_source(source_path)
+        self._finalize_source(source_path, archived, source_hash)
         entry.stage = JobStage.completed
         entry.error = None
         self.ks.state.upsert_manifest(entry)
@@ -519,6 +674,8 @@ class IngestionPipeline:
 
     def _index_chunks(self, document: Document) -> tuple[int, int]:
         """Embed only chunks whose content hash changed; delete stale ones."""
+        # Don't mix vectors from a different embedding setup into the index.
+        self.ks.ensure_index_matches()
         prev = self.ks.state.get_document_chunk_hashes(document.id)
         current = {c.id: c.content_hash for c in document.chunks}
 
@@ -540,24 +697,35 @@ class IngestionPipeline:
                 for c, v in zip(to_embed, vectors, strict=True)
             ]
             self.ks.vector_store.upsert(points)
+            # First vectors written: stamp the index with the setup that made them.
+            if self.ks.index_built_with() is None:
+                self.ks.record_index_fingerprint()
 
         self.ks.state.replace_document_chunks(document.id, current)
         return len(to_embed), reused
 
     # ---- source finalisation --------------------------------------------
 
-    def _finalize_source(self, source_path: Path) -> None:
+    def _finalize_source(
+        self, source_path: Path, archived: Path, source_hash: str
+    ) -> None:
         """Clear a processed file out of the inbox.
 
         The original was already archived under ``Sources/`` by
         :meth:`_preserve_source`, so keeping a second copy in
         ``00-Inbox/.processed/`` would duplicate every uploaded file. We remove
-        the inbox copy instead, and only fall back to moving it into
-        ``.processed/`` if the archive copy is missing for any reason (so a
-        file is never silently lost).
+        the inbox copy only after checking the archive holds the same content
+        (hash, not just size), and otherwise move it into ``.processed/`` so a
+        file is never silently lost.
         """
         if not self.settings.ingest.move_processed_sources:
             return
+        if source_path.resolve() == archived.resolve():
+            return  # ingested straight from Sources/; nothing to clear
+
+        archive_ok = (
+            archived.exists() and sha256_bytes(archived.read_bytes()) == source_hash
+        )
 
         # A promoted analytical file lives in the staging area, not the inbox.
         # Once it's archived in Sources/ and indexed it should leave staging,
@@ -569,29 +737,25 @@ class IngestionPipeline:
         except ValueError:
             pass
         else:
-            archived = self.settings.sources_path / source_path.name
-            if archived.exists():
+            if archive_ok:
                 source_path.unlink()
             return
 
         try:
-            rel = source_path.resolve().relative_to(
-                self.settings.inbox_path.resolve()
-            )
+            source_path.resolve().relative_to(self.settings.inbox_path.resolve())
         except ValueError:
             return  # not in inbox; leave it alone
 
-        archived = self.settings.sources_path / source_path.name
-        if archived.exists() and archived.stat().st_size == source_path.stat().st_size:
+        if archive_ok:
             source_path.unlink()
             return
 
         # Archive copy missing/mismatched -> preserve by moving, don't delete.
         processed_dir = self.settings.inbox_path / self.settings.ingest.processed_marker
         processed_dir.mkdir(parents=True, exist_ok=True)
-        dest = processed_dir / rel.name
+        dest = processed_dir / source_path.name
         if dest.exists():
-            dest.unlink()
+            dest = dest.with_name(f"{dest.stem}-{source_hash[:8]}{dest.suffix}")
         shutil.move(str(source_path), str(dest))
 
     # ---- deletion handling ----------------------------------------------

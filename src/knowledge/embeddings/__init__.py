@@ -8,18 +8,17 @@ from .hash_provider import HashEmbeddingProvider
 
 
 def build_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
-    """Factory with graceful fallback to the deterministic hash provider."""
+    """Build the configured provider. Hash is used only when configured.
+
+    No silent fallback: the hash provider has the same width (384) as the
+    default model, so a quiet swap would degrade search without any error.
+    """
     provider = cfg.provider
     if provider == "sentence_transformers":
-        try:
-            from .sentence_transformers_provider import (
-                SentenceTransformersProvider,
-            )
+        from .sentence_transformers_provider import SentenceTransformersProvider
 
-            return SentenceTransformersProvider(cfg)
-        except ImportError:
-            # Fall back so the system stays functional without the extra.
-            return HashEmbeddingProvider(cfg)
+        # Raises a clear ImportError if the 'embed' extra is missing.
+        return SentenceTransformersProvider(cfg)
     if provider == "openai":
         from .openai_provider import OpenAIEmbeddingProvider
 

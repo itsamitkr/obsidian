@@ -175,15 +175,5 @@ jev:
   enabled: false
 
 api:
-  host: 127.0.0.1
+  host: 127.0.0.1           # localhost only; the API has no authentication
   port: 8000
-
-# Public tunnel (runs locally; nothing is deployed to a cloud).
-# ngrok's free plan gives ONE stable dev domain -- no domain of your own needed
-# -- so the claude.ai connector URL survives restarts. Needs an authtoken:
-#   ngrok config add-authtoken <TOKEN>
-# See docs/TUNNEL.md.
-tunnel:
-  provider: ngrok
-  ngrok_domain: null      # optional pin, e.g. foo-bar.ngrok-free.dev
-  mcp_port: 8765

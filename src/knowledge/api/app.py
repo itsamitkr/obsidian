@@ -31,7 +31,7 @@ from ..markdown.frontmatter import parse_frontmatter
 from ..rebuild import IndexRebuilder
 from ..search import SearchService
 from ..system import KnowledgeSystem
-from .control import ControlCenter, generate_key
+from .control import ControlCenter
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -43,14 +43,9 @@ class SearchRequest(BaseModel):
     topic: str | None = None
 
 
-class TunnelRequest(BaseModel):
-    port: int = 8765
-
-
 class McpRequest(BaseModel):
     port: int = 8765
     read_only: bool = True
-    api_key: str | None = None
 
 
 class PromoteRequest(BaseModel):
@@ -78,8 +73,8 @@ def create_app(ks: KnowledgeSystem | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         yield
-        # Stop the watcher / MCP server / tunnel the panel started, so closing
-        # the app doesn't leave the vector store locked or a tunnel published.
+        # Stop the watcher / MCP server the panel started, so closing the app
+        # doesn't leave the vector store locked.
         control.shutdown()
 
     app = FastAPI(
@@ -298,33 +293,17 @@ def create_app(ks: KnowledgeSystem | None = None) -> FastAPI:
 
     @app.post("/control/mcp/start")
     def mcp_start(req: McpRequest):
-        return control.start_mcp(
-            port=req.port, read_only=req.read_only, api_key=req.api_key
-        )
+        return control.start_mcp(port=req.port, read_only=req.read_only)
 
     @app.post("/control/mcp/stop")
     def mcp_stop():
         return control.stop_mcp()
-
-    @app.post("/control/tunnel/start")
-    def tunnel_start(req: TunnelRequest):
-        return control.start_tunnel(port=req.port)
-
-    @app.post("/control/tunnel/stop")
-    def tunnel_stop():
-        return control.stop_tunnel()
-
-    @app.get("/control/api-key/new")
-    def new_api_key():
-        return {"api_key": generate_key()}
 
     @app.get("/control/commands")
     def commands():
         """Copy-pasteable CLI equivalents for everything the panel does."""
         root = str(control.project_root)
         exe = ".\\.venv\\Scripts\\knowledge.exe"
-        agent = control.tunnel_agent_path() or ".\\tools\\ngrok.exe"
-        url = control.tunnel_url()
         return {
             "project_root": root,
             "groups": [
@@ -351,10 +330,10 @@ def create_app(ks: KnowledgeSystem | None = None) -> FastAPI:
                     ],
                 },
                 {
-                    "title": "Local agent (Claude Code / Desktop) — no tunnel",
+                    "title": "Local MCP client (stdio)",
                     "items": [
-                        {"label": "Run MCP over stdio",
-                         "cmd": f"{exe} mcp"},
+                        {"label": "Run MCP over stdio (what an MCP client launches)",
+                         "cmd": f"{root}\\.venv\\Scripts\\knowledge.exe mcp"},
                         {"label": "Register with Claude Code",
                          "cmd": ("claude mcp add knowledge -e "
                                  f"KS_VAULT_PATH={ks.settings.vault_path.resolve()}"
@@ -362,16 +341,10 @@ def create_app(ks: KnowledgeSystem | None = None) -> FastAPI:
                     ],
                 },
                 {
-                    "title": "Remote (claude.ai web) — optional, on demand",
+                    "title": "Optional: MCP over HTTP (this machine only)",
                     "items": [
-                        {"label": "1. MCP over HTTP (read-only)",
-                         "cmd": (f"{exe} mcp --transport http --port 8765 "
-                                 "--public --read-only")},
-                        {"label": "2. Public HTTPS tunnel (runs locally)",
-                         "cmd": f"{agent} http 8765"},
-                        {"label": "3. Connector URL for claude.ai",
-                         "cmd": (f"{url}/mcp" if url
-                                 else "(start the tunnel to get the URL)")},
+                        {"label": "MCP over HTTP on 127.0.0.1 (read-only)",
+                         "cmd": f"{exe} mcp --transport http --port 8765"},
                     ],
                 },
             ],

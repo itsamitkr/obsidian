@@ -162,6 +162,13 @@ class StateStore:
             ).scalars().all()
             return {r.chunk_id: r.content_hash for r in rows}
 
+    def document_ids(self) -> set[str]:
+        """Every document that currently has chunks in the vector index."""
+        with self.session() as s:
+            return set(
+                s.execute(select(DocumentChunkRow.document_id).distinct()).scalars()
+            )
+
     def replace_document_chunks(
         self, document_id: str, chunk_hashes: dict[str, str]
     ) -> None:

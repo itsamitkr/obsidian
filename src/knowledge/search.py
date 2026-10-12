@@ -18,18 +18,28 @@ class SearchService:
         domain: str | None = None,
         topic: str | None = None,
     ) -> list[SearchResult]:
+        self.ks.ensure_index_matches()
         vector = self.ks.embedder.embed_one(query)
         filters: dict = {}
         if domain:
             filters["domain"] = domain
         if topic:
             filters["topic"] = topic
+        # Over-fetch so dropping stale hits still fills the requested limit.
         matches = self.ks.vector_store.search(
-            vector, limit=limit, filters=filters or None
+            vector, limit=limit * 2 + 5, filters=filters or None
         )
+        vault = self.ks.settings.vault_path
         results: list[SearchResult] = []
         for m in matches:
             p = m.payload
+            # A note deleted or renamed in the vault (outside ingestion) leaves
+            # its vectors behind until the next rebuild; never return those.
+            md = p.get("markdown_path", "")
+            if md and not (vault / md).exists():
+                continue
+            if len(results) >= limit:
+                break
             results.append(
                 SearchResult(
                     chunk_id=m.id,

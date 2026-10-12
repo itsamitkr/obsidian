@@ -266,7 +266,7 @@ def panel(
     no_open: bool = typer.Option(False, "--no-open", help="Don't open a browser."),
 ):
     """Open the Control Panel: upload files, run the watcher, rebuild indexes,
-    manage the MCP server and tunnel -- all from one page."""
+    manage the local MCP HTTP server -- all from one page."""
     _serve(config, host, port, open_browser=not no_open)
 
 
@@ -316,48 +316,56 @@ def mcp(
     config: str | None = ConfigOpt,
     transport: str = typer.Option(
         "stdio", "--transport", "-t",
-        help="stdio (local: Claude Desktop) | http | sse (remote: claude.ai web).",
+        help="stdio (default; local MCP clients) | http | sse (local HTTP "
+             "clients, binds 127.0.0.1).",
     ),
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host for http/sse."),
     port: int = typer.Option(8765, "--port", help="Bind port for http/sse."),
     allow_host: list[str] = typer.Option(
         None, "--allow-host",
-        help="Accept this Host header (e.g. your tunnel domain). Repeatable.",
+        help="Also accept this Host header (only behind your own reverse "
+             "proxy). Repeatable.",
     ),
     public: bool = typer.Option(
         False, "--public",
-        help="Accept any Host/Origin (needed for quick tunnels whose domain "
-             "changes each run). Only use behind an authenticated tunnel.",
+        help="Disable Host/Origin (DNS-rebinding) checks. Unsafe; only behind "
+             "an authenticated reverse proxy.",
     ),
     api_key: str | None = typer.Option(
         None, "--api-key", envvar="KS_MCP_API_KEY",
-        help="Require an x-api-key header. Only for clients that can send "
-             "headers (claude.ai cannot). Also settable via KS_MCP_API_KEY.",
+        help="Require an x-api-key header (for HTTP clients that can send "
+             "headers). Also settable via KS_MCP_API_KEY.",
     ),
-    read_only: bool = typer.Option(
-        False, "--read-only",
-        help="Expose retrieval tools only; disable create/ingest/rebuild.",
+    allow_writes: bool = typer.Option(
+        False, "--allow-writes", envvar="KS_MCP_ALLOW_WRITES",
+        help="Also expose the tools that change the vault (create_note, "
+             "ingest_file, rebuild_vector_index). Off by default: a document "
+             "the agent reads could tell it to use them. Also settable via "
+             "KS_MCP_ALLOW_WRITES=true.",
     ),
 ):
     """Run the MCP server.
 
-    stdio  -> local clients (Claude Desktop, Claude Code).
-    http   -> remote clients (claude.ai web) via a public HTTPS tunnel.
+    stdio  -> local MCP clients that launch the server (default).
+    http   -> local HTTP MCP clients on this machine.
 
-    WARNING: http/sse expose the vault with NO authentication. Only run them
-    behind an authenticated tunnel/reverse proxy. See docs/MCP.md.
+    WARNING: http/sse have NO authentication. Keep them on 127.0.0.1.
+    See docs/MCP.md.
     """
     from .mcp.server import run_http, run_stdio
 
+    read_only = not allow_writes
     if transport == "stdio":
-        run_stdio(config)
+        # Nothing may be printed to stdout here: it carries the MCP protocol.
+        run_stdio(config, read_only=read_only)
         return
     if transport in ("http", "streamable-http", "sse"):
         resolved = "sse" if transport == "sse" else "streamable-http"
         if host not in ("127.0.0.1", "localhost"):
             console.print(
                 "[yellow]WARNING:[/yellow] binding a no-auth MCP server to a "
-                f"non-local host ({host}). Put an authenticated tunnel in front."
+                f"non-local host ({host}). Anyone who can reach it can use "
+                "the vault."
             )
         console.print(
             f"[green]MCP {resolved}[/green] on http://{host}:{port}"
@@ -366,7 +374,8 @@ def mcp(
         if public:
             console.print(
                 "[yellow]--public:[/yellow] accepting any Host/Origin (no DNS-"
-                "rebinding protection). Ensure the tunnel in front is trusted."
+                "rebinding protection). Only safe behind an authenticated "
+                "reverse proxy."
             )
         console.print(
             f"auth: {'x-api-key required' if api_key else '[red]NONE[/red]'}"
@@ -374,8 +383,8 @@ def mcp(
         )
         if not api_key and not read_only:
             console.print(
-                "[yellow]Tip:[/yellow] when exposing this over a tunnel, use "
-                "--api-key (via a header-injecting proxy) and/or --read-only."
+                "[yellow]Tip:[/yellow] --allow-writes with no --api-key lets "
+                "any local process change the vault."
             )
         run_http(config, host=host, port=port, transport=resolved,
                  allowed_hosts=allow_host or None, public=public,

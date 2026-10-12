@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -135,7 +135,7 @@ class EmbeddingConfig(BaseModel):
 
 
 class VectorConfig(BaseModel):
-    # qdrant       -> Qdrant server (Docker/remote) at `url`
+    # qdrant       -> a Qdrant server at `url`
     # qdrant_local -> embedded Qdrant persisted on disk (no server needed)
     # memory       -> dependency-free fallback
     provider: Literal["qdrant", "qdrant_local", "memory"] = "memory"
@@ -193,48 +193,6 @@ class JevConfig(BaseModel):
 class APIConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
-
-
-class TunnelConfig(BaseModel):
-    """Public tunnel settings. Runs locally; nothing is deployed to a cloud.
-
-    ``ngrok`` is the only bundled provider: its free plan includes one
-    auto-assigned dev domain that is **stable across restarts** and needs no
-    domain of your own. Requires an authtoken
-    (``ngrok config add-authtoken ...``).
-
-    ``provider`` is kept as the extension point -- add a new literal here and a
-    matching branch in ``ControlCenter.start_tunnel`` to support another agent.
-
-    See docs/TUNNEL.md.
-    """
-
-    provider: Literal["ngrok"] = "ngrok"
-    # Optional explicit domain, e.g. "foo-bar.ngrok-free.dev". Leave unset to
-    # use whatever domain ngrok assigns the account.
-    ngrok_domain: str | None = None
-    mcp_port: int = 8765
-
-    @field_validator("ngrok_domain", mode="before")
-    @classmethod
-    def _strip_optional(cls, v):
-        """Tolerate stray whitespace/quotes from .env; blank becomes None."""
-        if isinstance(v, str):
-            v = v.strip().strip('"').strip("'")
-            return v or None
-        return v
-
-    @field_validator("provider", mode="before")
-    @classmethod
-    def _strip_required(cls, v):
-        """Same, but fall back to the default when blank.
-
-        e.g. `set KS_TUNNEL__PROVIDER=ngrok && ...` leaks a trailing space,
-        which would otherwise fail Literal validation with a cryptic error.
-        """
-        if isinstance(v, str):
-            return v.strip().strip('"').strip("'") or "ngrok"
-        return v
 
 
 # --------------------------------------------------------------------------
@@ -318,7 +276,6 @@ class Settings(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     jev: JevConfig = Field(default_factory=JevConfig)
     api: APIConfig = Field(default_factory=APIConfig)
-    tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
 
     # ---- Derived convenience paths ----------------------------------------
 

@@ -3,34 +3,35 @@
 ## TL;DR
 
 ```powershell
-# Windows (PowerShell)
+# Windows
 git clone <your-repo-url> knowledge-system
 cd knowledge-system
-./scripts/setup.ps1                 # core + dev, scaffolds the vault
-# or everything (PDF/DOCX conversion, real embeddings, Qdrant, MCP, API):
-./scripts/setup.ps1 -Extras all
+.\install.cmd          # once: Python, dependencies, models, Obsidian, Ollama
+.\start.cmd            # the Control Panel at http://127.0.0.1:8000
 ```
 
 ```bash
-# macOS / Linux
+# macOS
 git clone <your-repo-url> knowledge-system
 cd knowledge-system
-./scripts/setup.sh                  # core + dev
-EXTRAS=all ./scripts/setup.sh       # everything
-# or:  make setup   /   make install-all
+bash install.sh        # once
+bash start.sh
 ```
 
-Both scripts: create `.venv`, install the package, copy `.env.example` to
-`.env`, and run `knowledge init` to scaffold the vault. Then:
+The installer needs no admin rights and nothing preinstalled. What it sets up
+is listed in the [README](../README.md#quick-start). Options: `-NoObsidian`,
+`-NoLlm`, `-LlmModel <name>` on Windows; `--no-obsidian`, `--no-llm`,
+`LLM_MODEL=<name>` on macOS.
 
-```bash
-knowledge health
-```
+To uninstall: delete the repo folder (that removes `.tools/`, `.venv/` and the
+vault, so move the vault first if you want to keep it). Obsidian and Ollama are
+normal apps: remove them from Windows *Installed apps* or `~/Applications`.
 
 ## What gets installed
 
-Dependencies are declared in `pyproject.toml`, so `pip` resolves everything —
-there is no `requirements.txt` to drift out of sync.
+Dependencies are declared in `pyproject.toml`; the installer runs
+`uv pip install -e ".[all,dev]"`. To install a smaller set by hand (any Python
+3.12+), pick from the table below.
 
 | Install command | What you get |
 |-----------------|--------------|
@@ -43,8 +44,10 @@ there is no `requirements.txt` to drift out of sync.
 | `pip install -e ".[mcp]"` | + MCP SDK |
 | `pip install -e ".[all,dev]"` | everything above |
 
-The core install has **no heavy or paid dependencies** and always works;
-optional integrations degrade gracefully to built-in fallbacks if missing.
+The core install has **no heavy or paid dependencies** and always works with
+the default providers. If you configure an embedding model or Qdrant, its extra
+must be installed: the system stops with an install hint rather than quietly
+switching to the weaker defaults.
 
 A reasoning LLM is **not** a Python dependency: it is an external
 OpenAI-compatible server you point at. There is nothing to install unless you
@@ -80,10 +83,13 @@ nested `.git` directory.
 ## Verify the clone works
 
 ```bash
-pytest -q            # test suite, fallback stack, no network
+pytest -q            # test suite, default providers, no network
 ruff check src tests # lint
 knowledge health     # shows which providers are active
 ```
+
+To connect a local MCP client (Claude Desktop, Kiro, …) over stdio, see
+[MCP.md](MCP.md#connect-a-local-mcp-client-stdio).
 
 ## Using the same vault on several machines
 
@@ -93,15 +99,15 @@ backends without any code changes — just a different `.env`.
 
 | Machine | `.env` | Notes |
 |---------|--------|-------|
-| No Docker (locked-down laptop) | `KS_VECTOR__PROVIDER=qdrant_local` | real Qdrant, embedded on disk |
-| Docker available | `KS_VECTOR__PROVIDER=qdrant`<br>`KS_VECTOR__URL=http://localhost:6333` | run `docker compose up -d qdrant` first |
+| Any laptop (recommended) | `KS_VECTOR__PROVIDER=qdrant_local` | real Qdrant, embedded on disk; one process at a time |
+| Running your own Qdrant server | `KS_VECTOR__PROVIDER=qdrant`<br>`KS_VECTOR__URL=http://localhost:6333` | start the server first; several processes can share it |
 
 Workflow when moving to another machine:
 
 ```bash
 git clone <your-vault-repo> knowledge-vault   # the source of truth
-./scripts/setup.ps1 -Extras embed,vector      # or: EXTRAS=embed,vector ./scripts/setup.sh
-# edit .env to pick the vector provider for THIS machine
+.\install.cmd                                 # macOS: bash install.sh
+# edit .env if THIS machine needs a different vector provider
 knowledge rebuild-vector-index                # rebuild the index locally
 knowledge rebuild-graph
 ```
@@ -128,9 +134,3 @@ pip install -e . --no-deps
 
 Keep `pyproject.toml` as the source of truth for *ranges*; use the lock only
 when you need identical versions everywhere.
-
-## Docker (no local Python needed)
-
-```bash
-docker compose up -d     # Qdrant + the app, vault mounted from ./knowledge-vault
-```

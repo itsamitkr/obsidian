@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from knowledge.config import EmbeddingConfig, JevConfig, VectorConfig
 from knowledge.embeddings import build_embedding_provider
 from knowledge.embeddings.hash_provider import HashEmbeddingProvider
@@ -18,13 +20,17 @@ def test_hash_embeddings_deterministic_and_normalized():
     assert abs(norm - 1.0) < 1e-6
 
 
-def test_embedding_factory_falls_back():
-    # sentence_transformers likely not installed -> falls back to hash.
-    p = build_embedding_provider(
-        EmbeddingConfig(provider="sentence_transformers", dim=32)
-    )
-    assert p.dim in (32, p.dim)  # provider present or hash fallback
-    assert len(p.embed_one("hello")) == p.dim
+def test_embedding_factory_does_not_fall_back_silently():
+    # A configured model that isn't installed must fail, not quietly use hash.
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        with pytest.raises(ImportError):
+            build_embedding_provider(
+                EmbeddingConfig(provider="sentence_transformers", dim=32)
+            )
+    else:
+        pytest.skip("sentence-transformers is installed")
 
 
 def test_memory_vector_store_search():

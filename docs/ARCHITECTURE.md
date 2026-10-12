@@ -39,8 +39,8 @@ knowledge/
 ├── chunking/          # heading-aware semantic chunker
 ├── enrichment/        # selective LLM + Jev orchestration (token minimising)
 ├── ingestion/         # pipeline, manifest, filesystem watcher, lint
-├── api/               # FastAPI local API
-├── mcp/               # MCP server (stdio + HTTP, SDK 1.x/2.x compatible)
+├── api/               # FastAPI local API + Control Panel (binds 127.0.0.1)
+├── mcp/               # MCP server (stdio default; optional HTTP on 127.0.0.1; SDK 1.x/2.x)
 └── cli.py             # `knowledge` CLI
 ```
 
@@ -104,7 +104,7 @@ chunks whose text changed.
 
 | Change | How |
 |--------|-----|
-| Use Qdrant instead of memory | `KS_VECTOR__PROVIDER=qdrant`, `docker compose up -d qdrant` |
+| Use Qdrant instead of memory | `KS_VECTOR__PROVIDER=qdrant_local` (embedded), or `qdrant` + `KS_VECTOR__URL` for your own server |
 | Use real embeddings | `KS_EMBEDDING__PROVIDER=sentence_transformers` (or `openai`) |
 | Add a local LLM | `ollama pull llama3.2:3b`, then `KS_LLM__PROVIDER=openai` + `KS_LLM__MODEL=llama3.2:3b` (base_url already points at Ollama) |
 | Use a hosted LLM instead | same provider, change `KS_LLM__BASE_URL` + `KS_LLM__API_KEY` — note this sends briefs off-machine |

@@ -6,122 +6,85 @@ lines automatically.
 
 ```bash
 pip install -e ".[mcp]"
-knowledge mcp                              # stdio (default) -- local clients
-knowledge mcp --transport http --port 8765 # streamable-http -- remote clients
+knowledge mcp                              # stdio (default) -- local MCP clients
+knowledge mcp --transport http --port 8765 # optional HTTP, binds 127.0.0.1 only
 ```
 
-## Transports: which one for which client
+Everything runs on your machine. With stdio (the default) nothing listens on
+the network: the MCP client starts `knowledge mcp` itself as a child process
+and talks to it over stdin/stdout. Clients that connect from the cloud
+(claude.ai web/mobile custom connectors) would need a public URL, so this
+project deliberately doesn't support them.
 
-| Client | Transport | How it reaches the server |
-|--------|-----------|---------------------------|
-| Claude Desktop, Claude Code, Cursor | **stdio** | launches the server as a local child process |
-| **claude.ai web / mobile** | **streamable-http** | Anthropic's cloud connects to a **public HTTPS URL** |
+## Connect a local MCP client (stdio)
 
-The key fact: claude.ai web does **not** run anything on your machine — it
-connects from Anthropic's cloud, so it needs a publicly reachable HTTPS
-endpoint. `localhost` alone will not work.
+1. Install: run `install.cmd` from the repo folder (macOS: `bash install.sh`).
+   It creates `.venv` with everything, including the MCP SDK.
 
-## Local clients (Claude Desktop / Code / Cursor)
+2. Add this server to your client's MCP config:
 
-Point the client's MCP config at the installed `knowledge` command. Use an
-absolute `KS_VAULT_PATH` so the right vault (and its co-located state) is used
-regardless of the process's working directory:
+   - **command**: the absolute path to `.venv\Scripts\knowledge.exe`
+   - **args**: `["mcp"]`
+   - **env**: at least an absolute `KS_VAULT_PATH`, plus the provider
+     settings your vault's index was built with.
 
-```json
-{
-  "mcpServers": {
-    "knowledge": {
-      "command": "C:/Users/you/project/.venv/Scripts/knowledge.exe",
-      "args": ["mcp"],
-      "env": {
-        "KS_VAULT_PATH": "C:/Users/you/project/knowledge-vault"
-      }
-    }
-  }
-}
-```
-
-## Remote client: claude.ai web
-
-claude.ai web requires a public HTTPS URL and a paid plan (Pro/Max/Team/
-Enterprise; custom connectors are in beta). Steps:
-
-1. Run the server over HTTP (binds to localhost). Because requests arrive
-   through a tunnel, the Host header is the public domain, so it must be
-   accepted explicitly:
-
-   ```bash
-   # Accept any Host (the tunnel is the front door):
-   knowledge mcp --transport http --port 8765 --public --read-only
-
-   # Or pin your ngrok domain for a tighter check:
-   knowledge mcp --transport http --port 8765 \
-     --allow-host your-assigned-name.ngrok-free.dev --read-only
+   ```json
+   {
+     "mcpServers": {
+       "knowledge": {
+         "command": "C:\\path\\to\\obsidian\\.venv\\Scripts\\knowledge.exe",
+         "args": ["mcp"],
+         "env": {
+           "KS_VAULT_PATH": "C:\\path\\to\\obsidian\\knowledge-vault",
+           "KS_VECTOR__PROVIDER": "qdrant_local",
+           "KS_EMBEDDING__PROVIDER": "sentence_transformers"
+         }
+       }
+     }
+   }
    ```
 
-   Without one of these the SDK's DNS-rebinding protection rejects tunneled
-   requests with **HTTP 421 "Invalid Host header"**.
+   The same `mcpServers` block works in Claude Desktop's
+   `claude_desktop_config.json` and in Kiro's `.kiro/settings/mcp.json`.
+   Restart or reload the client after editing.
 
-2. Expose it over HTTPS with the local ngrok agent (do NOT bind the server to
-   0.0.0.0):
+Why the `env` block: the client doesn't start the server in the repo folder,
+so the repo's `.env` and the relative default `./knowledge-vault` are not
+picked up. Set the paths and providers there, or point `KS_CONFIG_FILE` at an
+absolute YAML config file. `config/default.yaml` is found relative to the
+installed package, so it still loads.
 
-   ```bash
-   ngrok http 8765
-   #   -> https://<your-domain>.ngrok-free.dev   (stable across restarts)
-   ```
+Notes:
 
-3. In claude.ai: **Settings → Connectors → Add custom connector**, paste the
-   public URL with the `/mcp` path, e.g.
-   `https://<your-domain>.ngrok-free.dev/mcp`, and connect.
+- stdout carries only the MCP protocol; logs go to stderr.
+- Embedded Qdrant (`qdrant_local`) allows one process at a time. Don't run
+  `knowledge panel` or `knowledge watch` while the client has the server open,
+  or use the `qdrant` server provider.
+- The server is **read-only by default** (stdio and HTTP): `create_note`,
+  `ingest_file` and `rebuild_vector_index` are not offered, so instructions
+  hidden in an ingested document can't get the agent to change the vault. To
+  enable them, add `"--allow-writes"` to `args` (or set
+  `KS_MCP_ALLOW_WRITES=true` in `env`).
 
-Full walkthrough, including authtoken setup and troubleshooting:
-[docs/TUNNEL.md](TUNNEL.md).
+Claude Code one-liner:
+`claude mcp add knowledge -e KS_VAULT_PATH=C:\path\to\obsidian\knowledge-vault -- C:\path\to\obsidian\.venv\Scripts\knowledge.exe mcp`
 
-> Easiest path: `knowledge panel` does steps 1–2 with buttons and shows the
-> connector URL with a copy button. It also runs MCP in-process, avoiding the
-> embedded-Qdrant single-client lock.
+## HTTP transport (local only, advanced)
 
-### ⚠️ Security — read before exposing
-
-By default the HTTP transport has **no authentication**: a public tunnel URL
-grants anyone who has it full read/write access to your vault via
-`create_note`, `ingest_file` and `rebuild_*`.
-
-Important constraint: claude.ai's custom-connector UI **cannot attach static
-headers**, and it only supports servers that are fully public or speak
-OAuth 2.1. Two consequences:
-
-- Simply adding `--api-key` and pointing claude.ai at the tunnel **will not
-  work** (every request would be rejected).
-- Auth proxies that require an interactive login don't help either — Anthropic's
-  cloud cannot complete one. They remain useful for protecting your *own*
-  browser access.
-
-Mitigations, strongest first:
-
-1. **Don't expose it.** Use a local stdio client (Claude Desktop / Claude Code).
-   No tunnel, no URL to leak. This is the recommended setup.
-2. **`--read-only`** — expose retrieval tools only, so even a leaked URL cannot
-   create, ingest, or rebuild anything. Use this whenever you tunnel.
-3. **Stop the tunnel when you're done.** A stable hostname is permanently
-   guessable once known, so don't leave it running idle.
-4. **`--api-key`** — requires an `x-api-key` header. Note that **claude.ai
-   cannot send it**, so this only helps for MCP clients (or a local reverse
-   proxy) that can set headers. It is not usable for a claude.ai connector.
-5. **Full OAuth 2.1** on the transport — the only native auth claude.ai
-   supports; significant work, only worth it for a persistent deployment.
+Off by default. For local HTTP MCP clients on this machine:
 
 ```bash
-# Recommended when tunnelling: retrieval only, nothing can be modified
-knowledge mcp --transport http --port 8765 --public --read-only
+knowledge mcp --transport http --port 8765
+#   -> http://127.0.0.1:8765/mcp
 ```
 
-### Stable URLs
-
-ngrok's free dev domain is **stable across restarts**, so the claude.ai
-connector only needs to be configured once. Pin it explicitly with
-`KS_TUNNEL__NGROK_DOMAIN` so the panel can show the URL before the agent
-reports it. See [docs/TUNNEL.md](TUNNEL.md).
+It binds `127.0.0.1` and has **no authentication**, so never expose it beyond
+localhost. Any local process can reach it. It is read-only unless you pass
+`--allow-writes`, `--api-key` requires an `x-api-key` header, and a `--host`
+other than localhost prints a warning. `--public` / `--allow-host` relax the
+Host/Origin checks and are only for use behind your own authenticated reverse
+proxy. The Control Panel's "Start MCP (HTTP)" button runs the same server
+in-process on 127.0.0.1.
 
 ## Tools
 
@@ -134,9 +97,9 @@ reports it. See [docs/TUNNEL.md](TUNNEL.md).
 | `graph_neighbors(node_id)` | node + outgoing edges + backlinks |
 | `graph_orphans()` | notes with no links |
 | `graph_broken_links()` | wiki links with no target note |
-| `ingest_file(path, force?)` | run the ingestion pipeline on a file |
-| `create_note(title, body, domain?, topic?, tags?, related?)` | create + index a note |
-| `rebuild_vector_index(full?)` | rebuild the vector index from Markdown |
+| `ingest_file(path, force?)` | run the ingestion pipeline on a file (`--allow-writes` only) |
+| `create_note(title, body, domain?, topic?, tags?, related?)` | create + index a note (`--allow-writes` only) |
+| `rebuild_vector_index(full?)` | rebuild the vector index from Markdown (`--allow-writes` only) |
 | `health()` | provider/config status |
 
 ## Resources

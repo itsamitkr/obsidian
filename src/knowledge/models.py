@@ -199,8 +199,7 @@ def slugify(text: str) -> str:
     return slug or "untitled"
 
 
-def document_id_for(source_path: str | Path, title: str | None = None) -> str:
-    """Stable document id derived from the relative source/markdown path."""
-    name = Path(source_path).stem
-    base = slugify(title or name)
-    return base
+def document_id_for(source_path: str | Path) -> str:
+    """Document id from the source file name (never the title, which can
+    collide across documents or change between versions)."""
+    return slugify(Path(source_path).stem)

@@ -64,7 +64,7 @@ flowchart TD
     MD --> EMB --> VDB
     MD --> PAR --> GDB
 
-    MCP["MCP server<br/>stdio · HTTP"]
+    MCP["MCP server<br/>stdio · HTTP (localhost)"]
     VDB --> MCP
     GDB --> MCP
 
@@ -75,7 +75,7 @@ flowchart TD
 
     ING -.->|"selective, token-frugal"| LLM
     ING -.-> JEV
-    MCP --> AGENT["LLM / agent<br/>Claude Code · claude.ai"]
+    MCP --> AGENT["LLM / agent<br/>Claude Desktop · Claude Code"]
 
     classDef truth fill:#1f6f3f,stroke:#0d3f22,color:#fff
     classDef derived fill:#24486e,stroke:#12243a,color:#fff
@@ -100,7 +100,7 @@ Jev can each be swapped **without touching the knowledge repository**:
 | `TrackClassifier` | extension + bounded shape probe (no LLM) | thresholds are configurable; can be disabled entirely |
 | `StructuredParser` | CSV/TSV/XLSX/JSON/XML → schema, records, entities | any parser producing a `StructuredDoc` |
 | `EmbeddingProvider` | hash (dependency-free) | `sentence_transformers`, OpenAI-compatible |
-| `VectorStore` | in-memory | Qdrant (local, Docker) |
+| `VectorStore` | in-memory | Qdrant (embedded on disk, or a server) |
 | `GraphStore` | SQLite | in-memory, (Neo4j later) |
 | `LLMProvider` | null (no tokens) | any OpenAI-compatible endpoint (Ollama/vLLM/LM Studio/OpenAI) |
 | `JevProvider` | stub (isolated) | real Jev adapter when the SDK is available |
@@ -221,63 +221,77 @@ for humans, and embeds `owner: Platform` / `region: eu-west-1` for the
 retriever. Low-cardinality column values also become real `entity` nodes in the
 graph, so they're navigable rather than dangling links.
 
+Indexing is capped at `structured.max_rows_indexed` (2,000) rows per table, but
+every row is counted. A capped table says so in the note, in its frontmatter
+(`record_count`, `records_indexed`, `truncated_tables`) and in the schema chunk
+the search returns ("Partial index: only the first 2000 of 50000 rows are
+searchable"), so an agent doesn't mistake a sample for the whole table.
+
 ### Serving: who can reach the knowledge base
 
 ```mermaid
 flowchart LR
     MD[("Markdown vault<br/>+ derived indexes")]
 
-    subgraph LOCAL["Local (no network exposure)"]
+    subgraph LOCAL["Local MCP client (no network exposure)"]
         direction TB
-        CC["Claude Code /<br/>Claude Desktop"]
+        CC["Claude Desktop /<br/>Claude Code / Kiro"]
         STDIO["knowledge mcp<br/><i>stdio</i>"]
         CC <--> STDIO
     end
 
-    subgraph REMOTE["Remote (claude.ai web) — optional, on demand"]
+    subgraph LOOPBACK["Optional — this machine only (127.0.0.1)"]
         direction TB
-        WEB["claude.ai"]
-        CF["ngrok tunnel<br/><i>runs on your machine</i>"]
-        HTTP["knowledge mcp --transport http<br/>--read-only"]
-        WEB --> CF --> HTTP
+        HTTP["knowledge mcp --transport http<br/>/ Control Panel"]
     end
 
     STDIO --> MD
     HTTP --> MD
 
-    style REMOTE stroke-dasharray: 5 5
+    style LOOPBACK stroke-dasharray: 5 5
 ```
 
-Everything runs on your machine — there is no cloud component. Local stdio is
-the default and safest path: nothing is exposed at all. The tunnel is optional
-and only needed because claude.ai web connects from Anthropic's cloud; start it
-on demand and stop it when you're done. See [docs/MCP.md](docs/MCP.md).
+Everything runs on your machine — there is no cloud component. Stdio is the
+default: the MCP client starts the server itself and nothing listens on the
+network. The optional MCP HTTP server and the Control Panel bind `127.0.0.1`
+only. See [docs/MCP.md](docs/MCP.md).
 
 ## Quick start
 
-Fresh clone, one command (creates the venv, installs deps, scaffolds the vault):
+Clone the repo, then two commands: one to install, one to open the upload UI.
+Everything installs for the current user only; no admin rights, nothing else
+to install first (not even Python).
 
-```powershell
-# Windows (PowerShell)
-./scripts/setup.ps1              # core + dev (runs with zero external services)
-./scripts/setup.ps1 -Extras all  # everything: MarkItDown, embeddings, Qdrant, MCP, API
-```
+| | Windows | macOS |
+|---|---|---|
+| **Install** (once) | `install.cmd` (or double-click it) | `bash install.sh` |
+| **Start the UI** | `start.cmd` | `bash start.sh` |
 
-```bash
-# macOS / Linux
-./scripts/setup.sh               # core + dev
-EXTRAS=all ./scripts/setup.sh    # everything   (or: make setup / make install-all)
-```
+`start` opens the Control Panel at <http://127.0.0.1:8000>: drag files in to
+upload them, search, and run the inbox watcher. Stop it with Ctrl+C.
 
-Prefer to do it by hand:
+The installer sets up:
 
-```bash
-python -m venv .venv && . .venv/Scripts/activate   # PowerShell: .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"          # core + tests
-# pip install -e ".[all,dev]"    # + MarkItDown, sentence-transformers, Qdrant, MCP, API
-knowledge init                   # scaffold ./knowledge-vault
-knowledge health                 # show configured providers
-```
+| Component | Where | Notes |
+|---|---|---|
+| uv + Python 3.12 | `.tools/` in the repo | Nothing global; uses no system Python |
+| All Python dependencies | `.venv/` | MarkItDown, spreadsheets, sentence-transformers, embedded Qdrant, Control Panel, MCP, dev tools |
+| Embedding model | Hugging Face cache | ~90 MB, downloaded once; later starts are offline |
+| Vector DB | `knowledge-vault/.knowledge/` | Embedded Qdrant, no server |
+| Obsidian (optional UI) | per-user app | Skip with `-NoObsidian` / `--no-obsidian` |
+| Ollama + `llama3.2:3b` (optional LLM) | per-user app | ~3.5 GB total; turns on enrichment in `.env`. Skip with `-NoLlm` / `--no-llm`, or pick a model with `-LlmModel` / `LLM_MODEL=` |
+
+It also creates `.env` (from `.env.example`, if missing) and the vault in
+`knowledge-vault/`, then runs `knowledge health` to check everything loads.
+Downloads are verified (checksums, and code signatures for the apps). Re-running
+is safe: finished steps are skipped and dependencies are brought up to date.
+
+> **Cloning to another machine?** See [docs/SETUP.md](docs/SETUP.md). In short:
+> this repo holds the **code**; your **vault is a separate git repo** (it's your
+> data), and is git-ignored here. `knowledge init` recreates the vault anywhere.
+
+The CLI is in `.venv` (`.\.venv\Scripts\knowledge.exe` on Windows,
+`.venv/bin/knowledge` on macOS); activate the venv to use plain `knowledge`.
 
 > **Cloning to another machine?** See [docs/SETUP.md](docs/SETUP.md). In short:
 > this repo holds the **code**; your **vault is a separate git repo** (it's your
@@ -323,7 +337,7 @@ knowledge panel              # opens http://127.0.0.1:8000/
 | **Upload** | drag-and-drop **multiple files** at once, or process whatever is already in the inbox; each result shows its track and why |
 | **Needs a decision** | analytical files that were staged rather than indexed, each with an **Add to Knowledge Base** button |
 | **Watcher & indexes** | start/stop the inbox watcher with a live log tail; rebuild the vector index or graph |
-| **Connect an AI agent** | start the MCP HTTP server (in-process, read-only by default), start the ngrok tunnel, and copy the ready connector URL |
+| **Connect an AI agent** | start/stop an optional MCP HTTP server on 127.0.0.1 (in-process, read-only by default) and copy its local URL; stdio clients need none of this |
 | **Search** | semantic search with scores and heading paths |
 | **Notes** | everything currently in the vault |
 | **CLI equivalents** | copy-paste commands for every action, including the Claude Code registration line |
@@ -335,18 +349,11 @@ so nothing behaves differently depending on how you drive it.
 > can start local processes, so never expose it to a network or bind it to
 > `0.0.0.0`.
 
-## Running with real backends
+## Search backends
 
-The defaults use dependency-free fallbacks so the system runs anywhere. For
-production-quality semantic search, install the extras and pick a real
-embedding model + vector DB:
-
-```bash
-pip install -e ".[embed,vector]"
-```
-
-**No Docker?** Use embedded Qdrant (persists on disk under
-`.knowledge/state/qdrant`):
+The installer configures real semantic search in `.env`: a local
+sentence-transformers model and embedded Qdrant (on disk under
+`.knowledge/state/qdrant`, no server to run):
 
 ```ini
 # .env
@@ -354,13 +361,16 @@ KS_EMBEDDING__PROVIDER=sentence_transformers
 KS_VECTOR__PROVIDER=qdrant_local
 ```
 
-**With Docker** (Qdrant server, better for large vaults — supports payload
-indexes):
+Without a `.env`, the built-in defaults are `hash` embeddings and an in-memory
+index. They need no extras, but `hash` only matches shared words, not meaning.
+A configured provider whose extra is missing is an error, not a silent
+fallback. The index records which embedding setup built it; after changing
+model, provider or dim, run `knowledge rebuild-vector-index` (search and ingest
+refuse to mix vectors until you do).
 
-```bash
-docker compose up -d qdrant
-# .env:  KS_VECTOR__PROVIDER=qdrant   KS_VECTOR__URL=http://localhost:6333
-```
+Embedded Qdrant allows one process at a time. If you need the watcher and an
+MCP client on the index at the same time, run a Qdrant server yourself and set
+`KS_VECTOR__PROVIDER=qdrant` + `KS_VECTOR__URL=http://localhost:6333`.
 
 Then re-embed from the Markdown source of truth:
 
@@ -370,17 +380,14 @@ knowledge rebuild-vector-index
 
 ### Optional: a local LLM for enrichment
 
-Out of the box `llm.provider` is `null`: no reasoning model, no tokens, nothing
-to install. Enrichment adds a summary, a topic, entities and suggested links to
-each note — useful, but never required, and it is the only part of the pipeline
-that isn't deterministic.
+Enrichment adds a summary, a topic, entities and suggested links to each note.
+It's useful but never required, and it's the only part of the pipeline that
+isn't deterministic. The installer sets it up with [Ollama](https://ollama.com)
+and `llama3.2:3b` (skip with `-NoLlm` / `--no-llm`). Without it, `llm.provider`
+stays `null`: no model, no tokens.
 
 `openai` names the **wire protocol, not the vendor**, so any OpenAI-compatible
-server works. For a fully local setup with [Ollama](https://ollama.com):
-
-```bash
-ollama pull llama3.2:3b        # ~2 GB; 3B is enough for metadata extraction
-```
+server works. The installer writes these settings; to set them by hand:
 
 ```ini
 # .env
@@ -405,26 +412,23 @@ Practical notes for CPU-only inference:
 - `llm.keep_alive` (default `30m`) stops the server evicting the model between notes, which otherwise makes every file pay the load cost again.
 - If the endpoint is down, `knowledge health` reports `llm_available: false` and ingestion carries on without enrichment rather than failing per file.
 
-## Docker
-
-```bash
-docker compose up -d        # starts Qdrant + the app (watching the inbox)
-```
-
-The vault is mounted from `./knowledge-vault` on the host — your Markdown and
-Git history stay on your machine.
-
 ## MCP server
 
 ```bash
 pip install -e ".[mcp]"
-knowledge mcp               # stdio transport
+knowledge mcp               # stdio transport (default)
 ```
 
-Exposed tools: `search_knowledge`, `get_note`, `list_tags`, `list_topics`,
-`graph_neighbors`, `graph_orphans`, `graph_broken_links`, `ingest_file`,
-`create_note`, `rebuild_vector_index`, `health`, plus a
-`knowledge://note/{path}` resource. See [docs/MCP.md](docs/MCP.md).
+To connect a local MCP client (Claude Desktop, Kiro, …), see
+[Connect a local MCP client (stdio)](docs/MCP.md#connect-a-local-mcp-client-stdio).
+
+Read-only by default: `search_knowledge`, `get_note`, `list_tags`,
+`list_topics`, `graph_neighbors`, `graph_orphans`, `graph_broken_links`,
+`health`, plus a `knowledge://note/{path}` resource. The tools that change the
+vault (`ingest_file`, `create_note`, `rebuild_vector_index`) are only offered
+with `knowledge mcp --allow-writes`, so instructions hidden in an ingested
+document can't get the agent to modify your notes. See
+[docs/MCP.md](docs/MCP.md).
 
 ## Obsidian (optional UI)
 
@@ -459,7 +463,23 @@ one-stop upload UI. With the watcher running (`knowledge watch`):
 Note: if you drag a file *into a note*, Obsidian inserts an `![[file]]` embed.
 The original is preserved (in `Sources/`), so the embed still resolves by
 name — but the primary result is the generated note in `Notes/`, which is what
-you'll link to and search.
+you'll link to and search. A *different* file with an already-used name is
+archived as `<name>-<hash8>.<ext>` instead of overwriting the earlier original.
+
+### Editing generated notes
+
+Generated notes are yours to edit, with one rule: re-ingesting a source
+regenerates its note, so edits to the generated text are replaced by the new
+version of the source. What you add is kept:
+
+- a `## My notes` section (up to the next `##` heading) — moved to the end of
+  the regenerated note and indexed for search;
+- your frontmatter: `domain`, `topic`, `status` keep your value, `tags` /
+  `related` / `aliases` are merged, and any key you add yourself is left alone.
+
+A source keeps the same note when it's re-ingested, even if its title changes.
+New notes are named after the source file, not its title, so two documents
+called "Meeting Notes" get two notes.
 
 ### Organization: flat + metadata-driven
 
@@ -470,9 +490,11 @@ There is **no fixed folder taxonomy**. All notes live in one content folder
 - `tags` (browse via Obsidian's tag pane)
 - `[[wiki links]]` and `related:` (browse via the graph)
 
-Folders are just storage; move notes around freely without breaking anything.
-Domains/topics are emergent from what you actually write — the taxonomy grows
-with your content instead of being predefined.
+Folders are just storage; move or rename notes freely. Search never returns a
+note whose file is gone, and `knowledge rebuild-vector-index --incremental`
+re-points moved notes and drops deleted ones. Domains/topics are emergent from
+what you actually write — the taxonomy grows with your content instead of being
+predefined.
 
 ## Documentation
 
@@ -480,14 +502,14 @@ with your content instead of being predefined.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components and data flow
 - [docs/INGESTION.md](docs/INGESTION.md) — the pipeline, idempotency, checkpoints
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — every setting
-- [docs/MCP.md](docs/MCP.md) — MCP tools and usage
-- [docs/TUNNEL.md](docs/TUNNEL.md) — ngrok tunnel setup for claude.ai (stable URL)
+- [docs/MCP.md](docs/MCP.md) — MCP tools, local client (stdio) setup
 - [docs/JEV.md](docs/JEV.md) — where the real Jev integration goes
 
 ## Testing
 
 ```bash
-pytest            # runs entirely on fallbacks; no Qdrant/LLM needed
+pytest            # default providers only; no Qdrant/LLM/network needed
+ruff check src tests
 ```
 
 ## License

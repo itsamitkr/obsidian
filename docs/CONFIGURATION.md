@@ -54,7 +54,7 @@ KS_LLM__ENRICHMENT_MODE=selective   # -> llm.enrichment_mode
 | `embedding.model` | MiniLM | model name / id |
 | `embedding.dim` | `384` | vector size. **Must match the model** — see below |
 | `embedding.base_url` / `api_key` | — | for the `openai` provider |
-| `vector.provider` | `memory` | `memory` \| `qdrant_local` (embedded, no Docker) \| `qdrant` (server) |
+| `vector.provider` | `memory` | `memory` \| `qdrant_local` (embedded on disk) \| `qdrant` (server) |
 | `vector.url` | `http://localhost:6333` | Qdrant endpoint (server mode only) |
 | `vector.collection` | `knowledge` | collection name |
 | `vector.distance` | `cosine` | `cosine` \| `dot` \| `euclid` |
@@ -76,6 +76,11 @@ KS_LLM__ENRICHMENT_MODE=selective   # -> llm.enrichment_mode
 | `jev.provider` | `stub` | `stub` \| real adapter |
 | `jev.enabled` | `false` | turn Jev on |
 | `api.host` / `api.port` | `127.0.0.1:8000` | local API bind |
+
+The MCP server has no config key: stdio is the default, and
+`knowledge mcp --transport http` binds `127.0.0.1` unless `--host` says
+otherwise. The server is read-only unless started with `--allow-writes` (or
+`KS_MCP_ALLOW_WRITES=true`).
 
 ## `embedding.dim` must match the model
 

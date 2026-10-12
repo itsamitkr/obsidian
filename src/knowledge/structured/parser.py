@@ -128,14 +128,20 @@ class StructuredParser:
                     str(h) if h is not None else f"col{i + 1}"
                     for i, h in enumerate(header)
                 ]
+                # Keep only the first max_rows_indexed rows, but count them all
+                # so the note doesn't present a truncated sheet as complete.
                 body = []
-                for count, row in enumerate(it):
-                    if count >= self.cfg.max_rows_indexed:
-                        break
-                    if any(c is not None and str(c).strip() for c in row):
+                total = 0
+                for row in it:
+                    if not any(c is not None and str(c).strip() for c in row):
+                        continue
+                    total += 1
+                    if len(body) < self.cfg.max_rows_indexed:
                         body.append(list(row))
                 if body or any(header):
-                    tables.append(self._build_table(ws.title, header, body))
+                    tables.append(
+                        self._build_table(ws.title, header, body, total=total)
+                    )
         finally:
             try:
                 wb.close()

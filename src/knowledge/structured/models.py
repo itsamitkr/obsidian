@@ -34,6 +34,10 @@ class Table:
     truncated: bool = False
 
     @property
+    def rows_indexed(self) -> int:
+        return len(self.rows)
+
+    @property
     def header(self) -> list[str]:
         return [c.name for c in self.columns]
 
@@ -56,6 +60,10 @@ class StructuredDoc:
     def record_count(self) -> int:
         return sum(t.row_count for t in self.tables)
 
+    @property
+    def records_indexed(self) -> int:
+        return sum(t.rows_indexed for t in self.tables)
+
     def to_dict(self) -> dict:
         return {
             "format": self.fmt,
@@ -63,6 +71,7 @@ class StructuredDoc:
                 {
                     "name": t.name,
                     "rows": t.row_count,
+                    "rows_indexed": t.rows_indexed,
                     "truncated": t.truncated,
                     "columns": [c.to_dict() for c in t.columns],
                 }
@@ -70,4 +79,5 @@ class StructuredDoc:
             ],
             "entities": self.entities,
             "record_count": self.record_count,
+            "records_indexed": self.records_indexed,
         }

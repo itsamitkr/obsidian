@@ -238,19 +238,14 @@
     <div id="stagedList"></div>
   </section>
 
-  <!-- Connect to Claude ---------------------------------------------- -->
+  <!-- Connect an MCP client ----------------------------------------- -->
   <section aria-labelledby="h-mcp">
     <h2 id="h-mcp">3 · Connect an AI agent (MCP)</h2>
-    <p class="hint">Local agents (Claude Code / Desktop) need no tunnel. For
-      <strong>claude.ai web</strong>, start the HTTP server and a public tunnel,
-      then paste the connector URL.</p>
-
-    <div class="notice" style="margin-bottom:14px">
-      Everything runs locally — the tunnel is just <code>ngrok</code> on this
-      machine, no cloud setup. It does make this machine reachable publicly, so keep
-      <strong>read-only</strong> on, treat the URL as a secret, and stop the tunnel
-      when you're done.
-    </div>
+    <p class="hint">Local MCP clients connect over <strong>stdio</strong>: they
+      start <code>knowledge mcp</code> themselves, so nothing needs to run here
+      (see <code>docs/MCP.md</code>). The button below starts an optional MCP
+      <strong>HTTP</strong> server on <code>127.0.0.1</code> for local HTTP
+      clients. It has no authentication, so keep <strong>read-only</strong> on.</p>
 
     <p class="notice" id="lockNote" hidden style="margin-bottom:14px">
       The MCP server runs <strong>inside this panel</strong> on its own port, so it
@@ -269,36 +264,17 @@
       <button class="danger" id="mcpStop">Stop</button>
     </div>
 
-    <div class="row" style="margin-top:12px">
-      <span class="pill"><span class="dot" id="dotTunnel"></span>Tunnel</span>
-      <button class="primary" id="tunStart">Start tunnel</button>
-      <button class="danger" id="tunStop">Stop</button>
-      <span class="muted" id="agentAvail"></span>
+    <div style="margin-top:14px">
+      <p class="cmdlabel">Local MCP endpoint (this machine only)</p>
+      <div class="cmd">
+        <code id="mcpUrl">— start the MCP server —</code>
+        <button id="copyUrl">Copy</button>
+      </div>
     </div>
 
     <div style="margin-top:14px">
-      <p class="cmdlabel">Connector URL for claude.ai</p>
-      <div class="cmd">
-        <code id="mcpUrl">— start the MCP server and tunnel —</code>
-        <button id="copyUrl">Copy</button>
-      </div>
-      <p class="muted" style="font-size:12.5px">
-        Paste this into claude.ai → Settings → Connectors → Add custom connector.
-        No API key is used: claude.ai cannot send custom headers, so
-        <strong>read-only</strong> is what protects the vault.
-      </p>
-      <p class="muted" style="font-size:12.5px" id="stableNote"></p>
-    </div>
-
-    <div class="grid cols2" style="margin-top:14px">
-      <div>
-        <p class="cmdlabel">MCP server log</p>
-        <pre class="log" id="mcpLog" aria-live="polite">—</pre>
-      </div>
-      <div>
-        <p class="cmdlabel">Tunnel log</p>
-        <pre class="log" id="tunnelLog" aria-live="polite">—</pre>
-      </div>
+      <p class="cmdlabel">MCP server log</p>
+      <pre class="log" id="mcpLog" aria-live="polite">—</pre>
     </div>
   </section>
 
@@ -413,29 +389,13 @@ async function refreshControl() {
     setDot("dotApi", true);
     el("apiState").textContent = "connected";
     setDot("dotWatcher", c.watcher.running);
-    setDot("dotTunnel", c.tunnel.running);
     setDot("dotMcp", c.mcp.running);
     el("watcherLog").textContent = c.watcher.log.join("\n") || "— not running —";
-    el("tunnelLog").textContent = c.tunnel.log.join("\n") || "— not running —";
     el("mcpLog").textContent = c.mcp.log.join("\n") || "— not running —";
-    el("agentAvail").textContent = c.tunnel.available
-      ? `via ${c.tunnel.provider}`
-      : `${c.tunnel.provider} not found (put it in ./tools/)`;
-    el("mcpUrl").textContent =
-      c.tunnel.mcp_url || "— start the MCP server and tunnel —";
-    el("stableNote").innerHTML = c.tunnel.stable
-      ? `<span class="ok">Stable hostname</span>${
-           c.tunnel.configured_hostname
-             ? " (" + esc(c.tunnel.configured_hostname) + ")" : ""
-         } — this URL survives restarts, so you add the connector in claude.ai once.`
-      : `<span class="warn">Rotating hostname</span> — quick tunnels get a new URL
-         each restart, so you must re-paste it in claude.ai. See
-         <code>docs/TUNNEL.md</code> for a stable one.`;
+    el("mcpUrl").textContent = c.mcp.url || "— start the MCP server —";
 
     el("watchStart").disabled = c.watcher.running;
     el("watchStop").disabled = !c.watcher.running;
-    el("tunStart").disabled = c.tunnel.running || !c.tunnel.available;
-    el("tunStop").disabled = !c.tunnel.running;
     el("mcpStart").disabled = c.mcp.running;
     el("mcpStop").disabled = !c.mcp.running;
     el("lockNote").hidden = !c.mcp.single_process_store;
@@ -675,23 +635,11 @@ action("mcpStop", "Stopping…", async () => {
   if (r.running) throw new Error("MCP did not stop");
   notify("MCP stopped", "ok");
 });
-action("tunStart", "Starting…", async () => {
-  const r = await jpost("/control/tunnel/start",
-    { port: Number(el("mcpPort").value) || 8765 });
-  if (r.error) throw new Error(r.error);
-  notify("Tunnel starting — the URL appears in a few seconds", "ok");
-  setTimeout(() => { refreshControl(); refreshCommands(); }, 6000);
-});
-action("tunStop", "Stopping…", async () => {
-  const r = await jpost("/control/tunnel/stop");
-  if (r.running) throw new Error("tunnel did not stop");
-  notify("Tunnel stopped", "ok");
-});
 el("copyUrl").addEventListener("click", () => copy(el("mcpUrl").textContent.trim(), "URL"));
 
 /* Logs scroll horizontally by default (preserves the agent's own alignment);
    this toggles soft wrapping instead. Preference persists. */
-const LOG_IDS = ["watcherLog", "tunnelLog", "mcpLog"];
+const LOG_IDS = ["watcherLog", "mcpLog"];
 function applyWrap(on) {
   LOG_IDS.forEach((id) => el(id).classList.toggle("wrap", on));
   try { localStorage.setItem("ks.wrapLogs", on ? "1" : "0"); } catch {}

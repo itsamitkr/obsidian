@@ -1,6 +1,6 @@
 """Qdrant-backed vector store (default recommended backend).
 
-Runs locally via Docker (see docker-compose.yml). Requires the ``vector``
+Embedded on disk (``qdrant_local``) or a Qdrant server. Requires the ``vector``
 extra (qdrant-client). Point ids are UUID5-derived from the chunk id so
 Qdrant's id constraints are satisfied while remaining deterministic.
 """
@@ -35,8 +35,8 @@ class QdrantVectorStore(VectorStore):
 
         self._qm = qm
         # Two deployment modes:
-        #   * server mode  -> cfg.url (Docker/remote Qdrant)
-        #   * local mode   -> on-disk persistence, no server/Docker required
+        #   * server mode  -> cfg.url (a Qdrant server you run)
+        #   * local mode   -> on-disk persistence, no server required
         # Local mode keeps the same Qdrant API (filters, payload indexes) and
         # persists under the vault's derived-state directory.
         if local_path:

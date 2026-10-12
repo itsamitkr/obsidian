@@ -102,9 +102,12 @@ Stages 1–3 and 12–14 are shared; the middle differs per track.
 
 4. **Preserve** the original into `90-Indexes/Sources/`.
 5. **Parse** into tables → columns (inferred type, null/distinct counts,
-   examples) → records. Row-capped by `structured.max_rows_indexed`.
+   examples) → records. Row-capped by `structured.max_rows_indexed`; every row
+   is still counted, so a capped table is reported as partial.
 6. **Frontmatter** with `type: reference`, `tags: [structured, <fmt>]`,
-   `record_count` and table names.
+   `record_count`, `records_indexed`, table names, and `truncated_tables` when
+   any table was capped. The note and the schema chunk both say "Partial
+   index: only the first N of M rows are searchable".
 7. **Chunk** from *records*, not from the Markdown: each chunk is a group of
    `column: value` blocks (`structured.records_per_chunk`), preceded by one
    schema-overview chunk so "what columns does X have?" retrieves well.
@@ -129,9 +132,34 @@ Stages 1–3 and 12–14 are shared; the middle differs per track.
 13. **Manifest = completed**, optional `git add/commit`.
 14. **Finalise source** — clear the file from the inbox. The original is already
     archived under `90-Indexes/Sources/`, so it is *not* duplicated into
-    `.processed/`. (If that archive copy is missing or size-mismatched, the file
-    is moved to `00-Inbox/.processed/` instead, so nothing is ever lost.) A
-    promoted file is cleared from the staging area the same way.
+    `.processed/`. (If that archive copy is missing or its content hash doesn't
+    match, the file is moved to `00-Inbox/.processed/` instead, so nothing is
+    ever lost.) A promoted file is cleared from the staging area the same way.
+
+**Names and ids.** A different file whose name is already taken in `Sources/`
+is archived as `<name>-<hash8>.<ext>` rather than overwriting the earlier
+original. A source keeps the note id it was first given, so re-ingesting it
+updates that note even if its title changed. A new source's id comes from its
+file name (not its title), with a short suffix if that id is already taken.
+
+**Editing generated notes.** Re-ingesting a source regenerates its note, so
+edits to the generated text are replaced by the new version of the source.
+What you add yourself is kept:
+
+- a `## My notes` section, up to the next `##` heading (use `###` inside it).
+  It is moved to the end of the regenerated note and indexed for search;
+- frontmatter you set: `domain`, `topic`, `status` and `created_at` keep your
+  value, `tags`, `related` and `aliases` are merged, and any key the pipeline
+  doesn't generate (for example `rating: 5`) is left alone.
+
+**Deleting or renaming notes.** Search never returns a note whose file is gone,
+so a deleted or renamed note drops out of results right away. Run
+`knowledge rebuild-vector-index --incremental` to clean up: it removes the
+vectors of deleted notes and re-points renamed ones at their new path. Rebuilds
+index notes only, not the originals in `Sources/` or files still in the inbox.
+Structured notes are rebuilt from their archived original (schema + record
+chunks, plus `## My notes`), not from the note's sample rows; if the original
+is missing, the note's Markdown is indexed instead.
 
 ### Why structured data is not just converted to Markdown
 
