@@ -19,9 +19,11 @@ bash start.sh
 ```
 
 The installer needs no admin rights and nothing preinstalled. What it sets up
-is listed in the [README](../README.md#quick-start). Options: `-NoObsidian`,
-`-NoLlm`, `-LlmModel <name>` on Windows; `--no-obsidian`, `--no-llm`,
-`LLM_MODEL=<name>` on macOS.
+is listed in the [README](../README.md#quick-start). It asks which MCP apps to
+connect (Claude Desktop, Cursor, Kiro); pass them to skip the question.
+Options: `-Apps <list>`, `-NoObsidian`, `-NoLlm`, `-LlmModel <name>` on
+Windows; `--apps=<list>`, `--no-obsidian`, `--no-llm`, `LLM_MODEL=<name>` on
+macOS.
 
 To uninstall: delete the repo folder (that removes `.tools/`, `.venv/` and the
 vault, so move the vault first if you want to keep it). Obsidian and Ollama are
@@ -88,8 +90,8 @@ ruff check src tests # lint
 knowledge health     # shows which providers are active
 ```
 
-To connect a local MCP client (Claude Desktop, Kiro, …) over stdio, see
-[MCP.md](MCP.md#connect-a-local-mcp-client-stdio).
+To connect an MCP app later: `knowledge connect cursor` (or `claude-desktop`,
+`kiro`). See [MCP.md](MCP.md#connect-a-local-mcp-client-stdio).
 
 ## Using the same vault on several machines
 

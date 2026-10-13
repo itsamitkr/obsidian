@@ -41,6 +41,7 @@ knowledge/
 ├── ingestion/         # pipeline, manifest, filesystem watcher, lint
 ├── api/               # FastAPI local API + Control Panel (binds 127.0.0.1)
 ├── mcp/               # MCP server (stdio default; optional HTTP on 127.0.0.1; SDK 1.x/2.x)
+├── clients.py         # `knowledge connect`: register the server in Claude Desktop / Cursor / Kiro
 └── cli.py             # `knowledge` CLI
 ```
 

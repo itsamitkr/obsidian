@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # One-shot install of the Knowledge System on macOS, for the current user only
-# (no sudo). Safe to re-run.   Usage: bash install.sh [--no-obsidian] [--no-llm]
+# (no sudo). Safe to re-run.
+#   Usage: bash install.sh [--apps=cursor,claude-desktop,kiro] [--no-obsidian] [--no-llm]
+#   Without --apps, it asks which MCP apps to connect.
 #
 #   * uv + Python 3.12   into ./.tools/ (nothing global; delete it to remove)
 #   * .venv + all Python dependencies: document conversion (MarkItDown),
@@ -17,13 +19,25 @@ ROOT="$(pwd)"
 
 NO_OBSIDIAN=0
 NO_LLM=0
+MCP_APPS=""
+MCP_APPS_SET=0
 for arg in "$@"; do
   case "$arg" in
     --no-obsidian) NO_OBSIDIAN=1 ;;
     --no-llm) NO_LLM=1 ;;
+    --apps=*) MCP_APPS="${arg#--apps=}"; MCP_APPS_SET=1 ;;
     *) echo "Unknown option: $arg"; exit 2 ;;
   esac
 done
+
+# Ask up front so the rest of the install can run unattended.
+if [ "$MCP_APPS_SET" = 0 ] && [ -t 0 ]; then
+  printf '\n\033[36mWhich AI apps should use your knowledge base?\033[0m\n'
+  echo "  claude-desktop, cursor, kiro (comma-separated), or press Enter to skip"
+  read -r -p "Apps: " MCP_APPS || MCP_APPS=""
+fi
+MCP_APPS="$(printf '%s' "$MCP_APPS" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+[ "$MCP_APPS" = none ] && MCP_APPS=""
 LLM_MODEL="${LLM_MODEL:-llama3.2:3b}"
 UV_VERSION="0.13.0"
 PYTHON_VERSION="3.12"
@@ -40,15 +54,41 @@ warn() { printf '    \033[33m%s\033[0m\n' "$1"; }
 fetch() { echo "    downloading $1"; curl -fL --retry 3 -o "$2" "$1"; }
 sha256_ok() { [ "$(shasum -a 256 "$1" | cut -d' ' -f1)" = "$2" ]; }
 
+# These functions run as `if` conditions, where bash ignores `set -e`, so every
+# step checks its own result and returns 1 on failure.
+
 # Copy the .app out of a .dmg into ~/Applications and check its signature.
 install_dmg_app() {  # <dmg> <App name>
   local mnt="$DL/mnt-$2"
-  mkdir -p "$mnt"
-  hdiutil attach "$1" -nobrowse -quiet -mountpoint "$mnt"
+  mkdir -p "$mnt" || return 1
+  hdiutil attach "$1" -nobrowse -quiet -mountpoint "$mnt" || return 1
   rm -rf "$APPS/$2.app"
-  cp -R "$mnt/$2.app" "$APPS/"
+  if ! cp -R "$mnt/$2.app" "$APPS/"; then
+    hdiutil detach "$mnt" -quiet; return 1
+  fi
   hdiutil detach "$mnt" -quiet
-  codesign --verify --deep --strict "$APPS/$2.app"
+  if ! codesign --verify --deep --strict "$APPS/$2.app"; then
+    warn "$2.app failed its signature check; removed."
+    rm -rf "$APPS/$2.app"; return 1
+  fi
+}
+
+install_obsidian() {
+  local url digest
+  read -r url digest < <("$PY" - <<'PYEOF'
+import json, re, urllib.request
+rel = json.load(urllib.request.urlopen(
+    "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest"))
+a = next(a for a in rel["assets"] if re.fullmatch(r"Obsidian-[\d.]+\.dmg", a["name"]))
+print(a["browser_download_url"], (a.get("digest") or "sha256:").split(":", 1)[1] or "-")
+PYEOF
+  ) || return 1
+  [ -n "$url" ] || return 1
+  fetch "$url" "$DL/Obsidian.dmg" || return 1
+  if [ "$digest" != "-" ] && ! sha256_ok "$DL/Obsidian.dmg" "$digest"; then
+    warn "Checksum mismatch for Obsidian.dmg"; return 1
+  fi
+  install_dmg_app "$DL/Obsidian.dmg" "Obsidian"
 }
 
 # --------------------------------------------------------------------------
@@ -99,20 +139,7 @@ elif [ -d "$APPS/Obsidian.app" ] || [ -d "/Applications/Obsidian.app" ]; then
   note "Obsidian" "already installed"
 else
   step "Installing Obsidian (into ~/Applications)"
-  if (
-    set -e
-    read -r URL DIGEST < <("$PY" - <<'PYEOF'
-import json, re, urllib.request
-rel = json.load(urllib.request.urlopen(
-    "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest"))
-a = next(a for a in rel["assets"] if re.fullmatch(r"Obsidian-[\d.]+\.dmg", a["name"]))
-print(a["browser_download_url"], (a.get("digest") or "sha256:").split(":", 1)[1] or "-")
-PYEOF
-    )
-    fetch "$URL" "$DL/Obsidian.dmg"
-    [ "$DIGEST" = "-" ] || sha256_ok "$DL/Obsidian.dmg" "$DIGEST"
-    install_dmg_app "$DL/Obsidian.dmg" "Obsidian"
-  ); then
+  if install_obsidian; then
     note "Obsidian" "installed"
   else
     warn "Obsidian install failed. It's optional: https://obsidian.md/download"
@@ -132,24 +159,26 @@ find_ollama() {
   return 1
 }
 
-if [ "$NO_LLM" = 1 ]; then
-  note "Ollama + model" "skipped (--no-llm)"
-elif (
-  set -e
-  if ! OLLAMA="$(find_ollama)"; then
+setup_ollama() {
+  local ollama
+  if ! ollama="$(find_ollama)"; then
     step "Installing Ollama (into ~/Applications)"
-    fetch "https://ollama.com/download/Ollama.dmg" "$DL/Ollama.dmg"
-    install_dmg_app "$DL/Ollama.dmg" "Ollama"
-    OLLAMA="$APPS/Ollama.app/Contents/Resources/ollama"
+    fetch "https://ollama.com/download/Ollama.dmg" "$DL/Ollama.dmg" || return 1
+    install_dmg_app "$DL/Ollama.dmg" "Ollama" || return 1
+    ollama="$APPS/Ollama.app/Contents/Resources/ollama"
   fi
   if ! ollama_up; then
-    open -g -a "Ollama" 2>/dev/null || ("$OLLAMA" serve >/dev/null 2>&1 &)
+    open -g -a "Ollama" 2>/dev/null || ("$ollama" serve >/dev/null 2>&1 &)
     for _ in $(seq 60); do ollama_up && break; sleep 1; done
-    ollama_up
+    ollama_up || { warn "The Ollama server didn't start"; return 1; }
   fi
   step "Pulling LLM model $LLM_MODEL (one time)"
-  "$OLLAMA" pull "$LLM_MODEL"
-); then
+  "$ollama" pull "$LLM_MODEL"
+}
+
+if [ "$NO_LLM" = 1 ]; then
+  note "Ollama + model" "skipped (--no-llm)"
+elif setup_ollama; then
   # Turn enrichment on, unless .env already points at another LLM.
   if grep -qE '^\s*KS_LLM__PROVIDER=(null)?\s*$' .env || ! grep -q '^\s*KS_LLM__PROVIDER=' .env; then
     "$PY" - "$LLM_MODEL" <<'PYEOF'
@@ -179,6 +208,20 @@ fi
 step "Checking the install (loads the embedding model, vector DB and LLM)"
 if .venv/bin/knowledge health; then HEALTH=ok; else HEALTH=FAILED; fi
 note "Health check" "$HEALTH"
+
+# --------------------------------------------------------------------------
+# 6. Connect MCP apps (Claude Desktop, Cursor, Kiro)
+# --------------------------------------------------------------------------
+if [ -z "$MCP_APPS" ]; then
+  note "MCP apps" "none (later: knowledge connect <app>)"
+else
+  step "Connecting MCP apps: $MCP_APPS"
+  if .venv/bin/knowledge connect "$MCP_APPS"; then
+    note "MCP apps" "connected ($MCP_APPS)"
+  else
+    note "MCP apps" "FAILED"
+  fi
+fi
 
 printf '\n\033[36mSummary\033[0m\n%s\n' "$SUMMARY"
 if [ "$HEALTH" != ok ]; then

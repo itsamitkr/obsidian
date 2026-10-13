@@ -21,7 +21,31 @@ project deliberately doesn't support them.
 1. Install: run `install.cmd` from the repo folder (macOS: `bash install.sh`).
    It creates `.venv` with everything, including the MCP SDK.
 
-2. Add this server to your client's MCP config:
+2. Connect your app. The installer asks which apps you use (or pass
+   `-Apps cursor,claude-desktop` / `--apps=cursor,claude-desktop`). Any time
+   later:
+
+   ```bash
+   knowledge connect cursor                  # or: claude-desktop, kiro
+   knowledge connect cursor,claude-desktop   # several at once
+   knowledge connect cursor --allow-writes   # also expose the write tools
+   knowledge connect cursor --dry-run        # print the entry, change nothing
+   knowledge disconnect cursor
+   ```
+
+   | App | Config file it updates |
+   |-----|------------------------|
+   | `claude-desktop` | Windows `%APPDATA%\Claude\claude_desktop_config.json`; macOS `~/Library/Application Support/Claude/claude_desktop_config.json` |
+   | `cursor` | `~/.cursor/mcp.json` (global, all projects) |
+   | `kiro` | `~/.kiro/settings/mcp.json` (user level) |
+
+   It adds or updates only the `knowledge` server: your other servers and
+   settings are kept, and the previous file is saved next to it as `.bak`. A
+   file that isn't valid JSON is left alone with an error. Restart the app (or
+   reload its MCP servers) afterwards. Run `connect` again after changing the
+   vault path or search providers in `.env`, since the entry copies them.
+
+   To add it by hand instead, the entry looks like this:
 
    - **command**: the absolute path to `.venv\Scripts\knowledge.exe`
    - **args**: `["mcp"]`
@@ -44,9 +68,7 @@ project deliberately doesn't support them.
    }
    ```
 
-   The same `mcpServers` block works in Claude Desktop's
-   `claude_desktop_config.json` and in Kiro's `.kiro/settings/mcp.json`.
-   Restart or reload the client after editing.
+   The same `mcpServers` block works in all three apps' config files above.
 
 Why the `env` block: the client doesn't start the server in the repo folder,
 so the repo's `.env` and the relative default `./knowledge-vault` are not
@@ -57,9 +79,11 @@ installed package, so it still loads.
 Notes:
 
 - stdout carries only the MCP protocol; logs go to stderr.
-- Embedded Qdrant (`qdrant_local`) allows one process at a time. Don't run
-  `knowledge panel` or `knowledge watch` while the client has the server open,
-  or use the `qdrant` server provider.
+- Embedded Qdrant (`qdrant_local`) allows one process at a time, and each app
+  starts its own server. So use one MCP app at a time (e.g. not Cursor and
+  Claude Desktop together), and don't run `knowledge panel` or
+  `knowledge watch` while an app has the server open, or use the `qdrant`
+  server provider.
 - The server is **read-only by default** (stdio and HTTP): `create_note`,
   `ingest_file` and `rebuild_vector_index` are not offered, so instructions
   hidden in an ingested document can't get the agent to change the vault. To

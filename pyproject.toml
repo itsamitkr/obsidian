@@ -20,7 +20,8 @@ classifiers = [
 
 # Core dependencies are intentionally lightweight. Heavy / optional
 # integrations (qdrant, sentence-transformers, markitdown, mcp) live in
-# extras so the system runs with deterministic fallbacks out of the box.
+# extras so the core install runs on dependency-free default providers.
+# install.cmd / install.sh install ".[all,dev]".
 dependencies = [
     "pydantic>=2.6",
     "pydantic-settings>=2.2",

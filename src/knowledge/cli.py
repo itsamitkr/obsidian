@@ -395,6 +395,78 @@ def mcp(
     raise typer.Exit(1)
 
 
+_APPS_HELP = "MCP app(s): claude-desktop, cursor, kiro."
+
+
+def _resolve_apps(apps: list[str]):
+    from .clients import get_client
+
+    try:
+        # Accept "cursor,claude-desktop" as well as separate arguments.
+        names = [n for a in apps for n in a.split(",") if n.strip()]
+        return [get_client(n) for n in names]
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from None
+
+
+@app.command()
+def connect(
+    apps: list[str] = typer.Argument(..., help=_APPS_HELP),
+    config: str | None = ConfigOpt,
+    allow_writes: bool = typer.Option(
+        False, "--allow-writes",
+        help="Also let the app use create_note, ingest_file and "
+             "rebuild_vector_index (off by default).",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the entry without changing any file."
+    ),
+):
+    """Register the knowledge base as an MCP server in Claude Desktop, Cursor
+    or Kiro. Existing servers and settings in the app's config are kept."""
+    from .clients import connect as do_connect
+
+    clients = _resolve_apps(apps)
+    settings = load_settings(config)
+    for client in clients:
+        try:
+            path, entry = do_connect(client, settings, allow_writes, dry_run)
+        except ValueError as exc:
+            console.print(f"[red]{client.label}:[/red] {exc}")
+            raise typer.Exit(1) from None
+        if dry_run:
+            console.print(f"[cyan]{client.label}[/cyan] would update {path}:")
+            console.print_json(json.dumps({"mcpServers": {"knowledge": entry}}))
+        else:
+            console.print(
+                f"[green]{client.label}:[/green] added 'knowledge' to {path}"
+            )
+    if not dry_run:
+        console.print("Restart the app (or reload its MCP servers) to pick it up.")
+        if settings.vector.provider == "qdrant_local":
+            console.print(
+                "[yellow]Note:[/yellow] embedded Qdrant allows one process at a "
+                "time. Use one MCP app at a time, and close it before running "
+                "the Control Panel or watcher."
+            )
+
+
+@app.command()
+def disconnect(apps: list[str] = typer.Argument(..., help=_APPS_HELP)):
+    """Remove the knowledge base from an app's MCP config."""
+    from .clients import disconnect as do_disconnect
+
+    for client in _resolve_apps(apps):
+        try:
+            path, removed = do_disconnect(client)
+        except ValueError as exc:
+            console.print(f"[red]{client.label}:[/red] {exc}")
+            raise typer.Exit(1) from None
+        state = "removed from" if removed else "was not in"
+        console.print(f"{client.label}: 'knowledge' {state} {path}")
+
+
 def _outcome_dict(outcome) -> dict:
     d = dict(outcome.__dict__)
     if d.get("enrichment") is not None:

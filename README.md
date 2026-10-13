@@ -75,7 +75,7 @@ flowchart TD
 
     ING -.->|"selective, token-frugal"| LLM
     ING -.-> JEV
-    MCP --> AGENT["LLM / agent<br/>Claude Desktop · Claude Code"]
+    MCP --> AGENT["LLM / agent<br/>Claude Desktop · Cursor · Kiro · Claude Code"]
 
     classDef truth fill:#1f6f3f,stroke:#0d3f22,color:#fff
     classDef derived fill:#24486e,stroke:#12243a,color:#fff
@@ -235,7 +235,7 @@ flowchart LR
 
     subgraph LOCAL["Local MCP client (no network exposure)"]
         direction TB
-        CC["Claude Desktop /<br/>Claude Code / Kiro"]
+        CC["Claude Desktop / Cursor /<br/>Kiro / Claude Code"]
         STDIO["knowledge mcp<br/><i>stdio</i>"]
         CC <--> STDIO
     end
@@ -280,6 +280,7 @@ The installer sets up:
 | Vector DB | `knowledge-vault/.knowledge/` | Embedded Qdrant, no server |
 | Obsidian (optional UI) | per-user app | Skip with `-NoObsidian` / `--no-obsidian` |
 | Ollama + `llama3.2:3b` (optional LLM) | per-user app | ~3.5 GB total; turns on enrichment in `.env`. Skip with `-NoLlm` / `--no-llm`, or pick a model with `-LlmModel` / `LLM_MODEL=` |
+| MCP app connection | the app's MCP config | The installer asks which apps you use: `claude-desktop`, `cursor`, `kiro`. Or pass `-Apps cursor,claude-desktop` / `--apps=cursor,claude-desktop` |
 
 It also creates `.env` (from `.env.example`, if missing) and the vault in
 `knowledge-vault/`, then runs `knowledge health` to check everything loads.
@@ -340,7 +341,7 @@ knowledge panel              # opens http://127.0.0.1:8000/
 | **Connect an AI agent** | start/stop an optional MCP HTTP server on 127.0.0.1 (in-process, read-only by default) and copy its local URL; stdio clients need none of this |
 | **Search** | semantic search with scores and heading paths |
 | **Notes** | everything currently in the vault |
-| **CLI equivalents** | copy-paste commands for every action, including the Claude Code registration line |
+| **CLI equivalents** | copy-paste commands for every action, including `knowledge connect` for Cursor, Claude Desktop and Kiro, and the Claude Code registration line |
 
 The panel is a thin client over the same services the CLI and MCP server use,
 so nothing behaves differently depending on how you drive it.
@@ -419,7 +420,16 @@ pip install -e ".[mcp]"
 knowledge mcp               # stdio transport (default)
 ```
 
-To connect a local MCP client (Claude Desktop, Kiro, …), see
+Connect it to Claude Desktop, Cursor or Kiro with one command (the installer
+offers this too); it updates the app's MCP config and keeps your other servers:
+
+```bash
+knowledge connect cursor                  # or: claude-desktop, kiro
+knowledge connect cursor,claude-desktop   # several at once
+knowledge disconnect cursor
+```
+
+Restart the app afterwards. With embedded Qdrant, use one app at a time. See
 [Connect a local MCP client (stdio)](docs/MCP.md#connect-a-local-mcp-client-stdio).
 
 Read-only by default: `search_knowledge`, `get_note`, `list_tags`,

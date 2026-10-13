@@ -1,6 +1,6 @@
 """Shared pytest fixtures.
 
-Every test runs against the dependency-free fallback stack (hash embeddings,
+Every test runs against the dependency-free default providers (hash embeddings,
 in-memory vector store, sqlite/memory graph, null LLM, stub Jev) so the suite
 needs no external services (Qdrant/Ollama) or optional extras.
 """

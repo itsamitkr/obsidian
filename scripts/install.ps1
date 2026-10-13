@@ -25,11 +25,16 @@
 
 .PARAMETER LlmModel
     Ollama model to pull and use for enrichment (default llama3.2:3b, ~2 GB).
+
+.PARAMETER Apps
+    MCP apps to connect the knowledge base to: claude-desktop, cursor, kiro
+    (comma-separated), or none. If omitted, the installer asks.
 #>
 param(
     [switch]$NoObsidian,
     [switch]$NoLlm,
-    [string]$LlmModel = "llama3.2:3b"
+    [string]$LlmModel = "llama3.2:3b",
+    [string]$Apps = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,6 +51,16 @@ $downloads = Join-Path $env:TEMP "knowledge-install"
 New-Item -ItemType Directory -Force $tools, $downloads | Out-Null
 
 $results = [ordered]@{}
+
+# Ask up front so the rest of the install can run unattended.
+if (-not $Apps -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+    Write-Host ""
+    Write-Host "Which AI apps should use your knowledge base?" -ForegroundColor Cyan
+    Write-Host "  claude-desktop, cursor, kiro (comma-separated), or press Enter to skip"
+    $Apps = Read-Host "Apps"
+}
+$Apps = ($Apps -replace '\s', '').ToLower()
+if ($Apps -eq "none") { $Apps = "" }
 
 function Step($msg) { Write-Host ""; Write-Host "==> $msg" -ForegroundColor Cyan }
 function Warn($msg) { Write-Host "    $msg" -ForegroundColor Yellow }
@@ -231,6 +246,17 @@ if ($NoLlm) {
 Step "Checking the install (loads the embedding model, vector DB and LLM)"
 & .\.venv\Scripts\knowledge.exe health
 $results["Health check"] = if ($LASTEXITCODE -eq 0) { "ok" } else { "FAILED" }
+
+# --------------------------------------------------------------------------
+# 6. Connect MCP apps (Claude Desktop, Cursor, Kiro)
+# --------------------------------------------------------------------------
+if (-not $Apps) {
+    $results["MCP apps"] = "none (later: knowledge connect <app>)"
+} else {
+    Step "Connecting MCP apps: $Apps"
+    & .\.venv\Scripts\knowledge.exe connect $Apps
+    $results["MCP apps"] = if ($LASTEXITCODE -eq 0) { "connected ($Apps)" } else { "FAILED" }
+}
 
 Remove-Item -Recurse -Force $downloads -ErrorAction SilentlyContinue
 

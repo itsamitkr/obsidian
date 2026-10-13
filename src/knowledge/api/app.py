@@ -334,6 +334,12 @@ def create_app(ks: KnowledgeSystem | None = None) -> FastAPI:
                     "items": [
                         {"label": "Run MCP over stdio (what an MCP client launches)",
                          "cmd": f"{root}\\.venv\\Scripts\\knowledge.exe mcp"},
+                        {"label": "Connect Cursor",
+                         "cmd": f"{exe} connect cursor"},
+                        {"label": "Connect Claude Desktop",
+                         "cmd": f"{exe} connect claude-desktop"},
+                        {"label": "Connect Kiro",
+                         "cmd": f"{exe} connect kiro"},
                         {"label": "Register with Claude Code",
                          "cmd": ("claude mcp add knowledge -e "
                                  f"KS_VAULT_PATH={ks.settings.vault_path.resolve()}"
